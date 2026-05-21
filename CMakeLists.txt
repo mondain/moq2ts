@@ -138,6 +138,11 @@ set(SOURCES
     src/publish/MoqxrPublisher.cpp
 )
 
+if(APPLE)
+    list(APPEND SOURCES src/media/MacCaptureEnumerator.mm)
+    enable_language(OBJCXX)
+endif()
+
 set(HEADERS
     src/app/MainWindow.h
     src/app/PublishConfig.h
@@ -153,6 +158,19 @@ add_executable(moq2ts-publisher
     ${HEADERS}
 )
 
+if(APPLE)
+    set_target_properties(moq2ts-publisher PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "moq2ts"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.moq2ts.publisher"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_LONG_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright (c) moq2ts contributors"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MacOSXBundleInfo.plist.in"
+    )
+endif()
+
 set_target_properties(moq2ts-publisher PROPERTIES AUTOGEN_BUILD_DIR ${CMAKE_BINARY_DIR}/generated)
 
 set_target_properties(moq2ts-publisher PROPERTIES
@@ -164,6 +182,14 @@ set_target_properties(moq2ts-publisher PROPERTIES
 target_include_directories(moq2ts-publisher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(moq2ts-publisher PRIVATE ${QT_LIBS})
+
+if(APPLE)
+    target_link_libraries(moq2ts-publisher PRIVATE
+        "-framework AVFoundation"
+        "-framework CoreMedia"
+        "-framework Foundation"
+    )
+endif()
 
 if(OPENH264_FOUND)
     target_link_libraries(moq2ts-publisher PRIVATE openh264::openh264)
@@ -199,6 +225,7 @@ endif()
 
 install(TARGETS moq2ts-publisher
     RUNTIME DESTINATION bin
+    BUNDLE DESTINATION .
 )
 
 # ----------------

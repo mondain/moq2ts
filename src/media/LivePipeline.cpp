@@ -168,15 +168,15 @@ void LivePipeline::start(const PublishConfig& cfg, MoqxrPublisher* publisher) {
 }
 
 void LivePipeline::stop() {
-    if (!m_running.exchange(false, std::memory_order_acq_rel)) {
-        return;
-    }
+    const bool wasRunning = m_running.exchange(false, std::memory_order_acq_rel);
 
     if (m_workerThread.joinable()) {
         m_workerThread.join();
     }
 
-    emit status(QStringLiteral("Streaming pipeline stopped."));
+    if (wasRunning) {
+        emit status(QStringLiteral("Streaming pipeline stopped."));
+    }
 }
 
 void LivePipeline::runLoop() {

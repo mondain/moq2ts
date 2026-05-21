@@ -185,9 +185,10 @@ struct LibavCaptureSource::Impl {
     AVFormatContext* outputFormat = nullptr;
     AVIOContext* outputIo = nullptr;
     unsigned char* outputIoBuffer = nullptr;
+    bool headerWritten = false;
 
     ~Impl() {
-        if (outputFormat) {
+        if (outputFormat && headerWritten) {
             av_write_trailer(outputFormat);
         }
         if (outputIo) {
@@ -261,6 +262,7 @@ struct LibavCaptureSource::Impl {
             }
             return false;
         }
+        headerWritten = true;
 
         pumpUntilInitData();
         if (initDataBytes.isEmpty()) {
@@ -344,8 +346,7 @@ struct LibavCaptureSource::Impl {
         stream->encoder = avcodec_alloc_context3(encoder);
         stream->encoder->codec_type = AVMEDIA_TYPE_AUDIO;
         stream->encoder->sample_rate = 48000;
-        stream->encoder->channels = 2;
-        stream->encoder->channel_layout = AV_CH_LAYOUT_STEREO;
+        av_channel_layout_default(&stream->encoder->ch_layout, 2);
         stream->encoder->bit_rate = static_cast<int64_t>(config.audioTargetBitrateKbps) * 1000;
         stream->encoder->sample_fmt = encoder->sample_fmts ? encoder->sample_fmts[0] : AV_SAMPLE_FMT_FLTP;
         stream->encoder->time_base = AVRational{1, stream->encoder->sample_rate};
@@ -448,7 +449,7 @@ struct LibavCaptureSource::Impl {
             }
         }
 
-        const int alignedBytes = (std::min(muxedBytes.size(), targetBytes) / 188) * 188;
+        const int alignedBytes = (std::min<qsizetype>(muxedBytes.size(), targetBytes) / 188) * 188;
         if (alignedBytes <= 0) {
             return false;
         }
@@ -548,8 +549,7 @@ struct LibavCaptureSource::Impl {
         } else {
             frame->format = stream->encoder->sample_fmt;
             frame->sample_rate = stream->encoder->sample_rate;
-            frame->channel_layout = stream->encoder->channel_layout;
-            frame->channels = stream->encoder->channels;
+            av_channel_layout_copy(&frame->ch_layout, &stream->encoder->ch_layout);
             frame->nb_samples = inputFrame->nb_samples;
             int rc = av_frame_get_buffer(frame.get(), 0);
             if (rc < 0) {
@@ -558,16 +558,23 @@ struct LibavCaptureSource::Impl {
                 }
                 return false;
             }
-            stream->swr = swr_alloc_set_opts(stream->swr,
-                                             stream->encoder->channel_layout,
-                                             stream->encoder->sample_fmt,
-                                             stream->encoder->sample_rate,
-                                             inputFrame->channel_layout ? inputFrame->channel_layout : av_get_default_channel_layout(inputFrame->channels),
-                                             static_cast<AVSampleFormat>(inputFrame->format),
-                                             inputFrame->sample_rate,
-                                             0,
-                                             nullptr);
-            if (!stream->swr || swr_init(stream->swr) < 0) {
+            AVChannelLayout inputLayout;
+            if (inputFrame->ch_layout.nb_channels > 0) {
+                av_channel_layout_copy(&inputLayout, &inputFrame->ch_layout);
+            } else {
+                av_channel_layout_default(&inputLayout, inputFrame->ch_layout.nb_channels > 0 ? inputFrame->ch_layout.nb_channels : 2);
+            }
+            rc = swr_alloc_set_opts2(&stream->swr,
+                                     &stream->encoder->ch_layout,
+                                     stream->encoder->sample_fmt,
+                                     stream->encoder->sample_rate,
+                                     &inputLayout,
+                                     static_cast<AVSampleFormat>(inputFrame->format),
+                                     inputFrame->sample_rate,
+                                     0,
+                                     nullptr);
+            av_channel_layout_uninit(&inputLayout);
+            if (rc < 0 || !stream->swr || swr_init(stream->swr) < 0) {
                 if (error) {
                     *error = QStringLiteral("Failed creating audio resampler.");
                 }
@@ -624,6 +631,83 @@ struct LibavCaptureSource::Impl {
     }
 #endif
 };
+
+#ifdef Q_OS_DARWIN
+QList<CaptureDevice> macEnumerateVideoInputs();
+QList<CaptureDevice> macEnumerateAudioInputs();
+#endif
+
+QList<CaptureDevice> LibavCaptureSource::enumerateVideoInputs() {
+#ifdef Q_OS_DARWIN
+    return macEnumerateVideoInputs();
+#endif
+    QList<CaptureDevice> devices;
+#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+    avdevice_register_all();
+    const AVInputFormat* format = av_find_input_format(videoInputFormatName());
+    if (!format) {
+        return devices;
+    }
+    AVDeviceInfoList* list = nullptr;
+    if (avdevice_list_input_sources(format, nullptr, nullptr, &list) < 0 || !list) {
+        return devices;
+    }
+    for (int i = 0; i < list->nb_devices; ++i) {
+        AVDeviceInfo* info = list->devices[i];
+        if (!info) continue;
+        bool isVideo = false;
+        for (int k = 0; k < info->nb_media_types; ++k) {
+            if (info->media_types[k] == AVMEDIA_TYPE_VIDEO) { isVideo = true; break; }
+        }
+        if (info->nb_media_types == 0) {
+            isVideo = true;
+        }
+        if (!isVideo) continue;
+        CaptureDevice d;
+        d.id = QString::number(i);
+        d.description = QString::fromUtf8(info->device_description ? info->device_description : info->device_name);
+        devices.append(d);
+    }
+    avdevice_free_list_devices(&list);
+#endif
+    return devices;
+}
+
+QList<CaptureDevice> LibavCaptureSource::enumerateAudioInputs() {
+#ifdef Q_OS_DARWIN
+    return macEnumerateAudioInputs();
+#endif
+    QList<CaptureDevice> devices;
+#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+    avdevice_register_all();
+    const AVInputFormat* format = av_find_input_format(audioInputFormatName());
+    if (!format) {
+        return devices;
+    }
+    AVDeviceInfoList* list = nullptr;
+    if (avdevice_list_input_sources(format, nullptr, nullptr, &list) < 0 || !list) {
+        return devices;
+    }
+    for (int i = 0; i < list->nb_devices; ++i) {
+        AVDeviceInfo* info = list->devices[i];
+        if (!info) continue;
+        bool isAudio = false;
+        for (int k = 0; k < info->nb_media_types; ++k) {
+            if (info->media_types[k] == AVMEDIA_TYPE_AUDIO) { isAudio = true; break; }
+        }
+        if (info->nb_media_types == 0) {
+            isAudio = true;
+        }
+        if (!isAudio) continue;
+        CaptureDevice d;
+        d.id = QString::number(i);
+        d.description = QString::fromUtf8(info->device_description ? info->device_description : info->device_name);
+        devices.append(d);
+    }
+    avdevice_free_list_devices(&list);
+#endif
+    return devices;
+}
 
 LibavCaptureSource::LibavCaptureSource(PublishConfig config)
     : m_impl(std::make_unique<Impl>(std::move(config))) {}

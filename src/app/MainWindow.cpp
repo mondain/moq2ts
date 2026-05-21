@@ -3,7 +3,10 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 
+#include "../media/LibavCaptureSource.h"
+
 #ifdef MOQ2TS_HAVE_QT_MULTIMEDIA
+#if !defined(Q_OS_DARWIN)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QAudioDevice>
 #include <QCameraDevice>
@@ -12,6 +15,7 @@
 #include <QAudio>
 #include <QAudioDeviceInfo>
 #include <QCameraInfo>
+#endif
 #endif
 #endif
 
@@ -205,7 +209,14 @@ void MainWindow::refreshCaptureDevices() {
     cameraSourceCombo->addItem("No camera selected", QString());
     microphoneSourceCombo->addItem("No microphone selected", QString());
 
-#ifdef MOQ2TS_HAVE_QT_MULTIMEDIA
+#if defined(Q_OS_DARWIN)
+    for (const CaptureDevice& device : LibavCaptureSource::enumerateVideoInputs()) {
+        cameraSourceCombo->addItem(device.description, device.id);
+    }
+    for (const CaptureDevice& device : LibavCaptureSource::enumerateAudioInputs()) {
+        microphoneSourceCombo->addItem(device.description, device.id);
+    }
+#elif defined(MOQ2TS_HAVE_QT_MULTIMEDIA)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const auto videoInputs = QMediaDevices::videoInputs();
     for (const QCameraDevice& device : videoInputs) {
@@ -227,6 +238,10 @@ void MainWindow::refreshCaptureDevices() {
         microphoneSourceCombo->addItem(microphone.deviceName(), microphone.deviceName());
     }
 #endif
+#else
+    cameraSourceCombo->setItemText(0, "Qt Multimedia unavailable");
+    microphoneSourceCombo->setItemText(0, "Qt Multimedia unavailable");
+#endif
 
     if (cameraSourceCombo->count() == 1) {
         cameraSourceCombo->setItemText(0, "No camera detected");
@@ -234,10 +249,6 @@ void MainWindow::refreshCaptureDevices() {
     if (microphoneSourceCombo->count() == 1) {
         microphoneSourceCombo->setItemText(0, "No microphone detected");
     }
-#else
-    cameraSourceCombo->setItemText(0, "Qt Multimedia unavailable");
-    microphoneSourceCombo->setItemText(0, "Qt Multimedia unavailable");
-#endif
 }
 
 PublishConfig MainWindow::currentConfig() const {

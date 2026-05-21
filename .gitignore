@@ -64,3 +64,14 @@ recordings/
 # OS files
 .DS_Store
 Thumbs.db
+
+# macOS build outputs
+*.app/
+*.dSYM/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Claude Code workspace metadata
+.claude/
