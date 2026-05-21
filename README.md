@@ -28,6 +28,8 @@ The application targets:
 
 - Live configuration of endpoint/namespace/stream
 - Separate video and audio source selectors (M2TS file/pipe)
+- Camera and microphone enumeration through Qt Multimedia when available
+- In-process libavdevice capture path for selected camera/microphone devices
 - M2TS program selection for publishing one program/track from an MPTS source
 - Tunable codec and bitrate settings
 - Fragment size control and pacing
@@ -40,6 +42,8 @@ The application targets:
 - Optional (recommended for real encode path):
   - `libopenh264-dev`
   - `libav*` dev packages
+  - `libavdevice-dev`
+  - `libswscale-dev`
   - `libopus-dev`
 
 If third-party headers are unavailable, the app still builds using mock defaults.
@@ -86,6 +90,10 @@ artifacts under `build/install`.
 - **Encoding**: OpenH264/libav/libopus dependencies are present for in-process
   encoder work. The current live path expects a conforming multiplexed M2TS
   source and never shells out to the `ffmpeg` application.
+- **Capture devices**: camera and microphone devices are listed in the UI when
+  Qt Multimedia is available. If no file/pipe source is provided, selected
+  devices are opened through libavdevice, encoded in-process, muxed to MPEG-TS
+  through libavformat, and published as MSFTS M2TS objects.
 
 ## moqxr integration
 

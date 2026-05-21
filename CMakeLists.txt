@@ -22,13 +22,21 @@ endif()
 # ---------------- Qt discovery ----------------
 set(QT_LIBS)
 if(NOT QT_DEFAULT_MAJOR_VERSION)
-    find_package(Qt6 QUIET COMPONENTS Widgets)
+    find_package(Qt6 QUIET COMPONENTS Widgets OPTIONAL_COMPONENTS Multimedia)
     if(Qt6_FOUND)
         list(APPEND QT_LIBS Qt6::Widgets)
+        if(TARGET Qt6::Multimedia)
+            list(APPEND QT_LIBS Qt6::Multimedia)
+            add_compile_definitions(MOQ2TS_HAVE_QT_MULTIMEDIA)
+        endif()
     else()
-        find_package(Qt5 QUIET COMPONENTS Widgets)
+        find_package(Qt5 QUIET COMPONENTS Widgets OPTIONAL_COMPONENTS Multimedia)
         if(Qt5_FOUND)
             list(APPEND QT_LIBS Qt5::Widgets)
+            if(TARGET Qt5::Multimedia)
+                list(APPEND QT_LIBS Qt5::Multimedia)
+                add_compile_definitions(MOQ2TS_HAVE_QT_MULTIMEDIA)
+            endif()
         endif()
     endif()
 endif()
@@ -61,13 +69,18 @@ if(MOQ2TS_ENABLE_LIBAV_AUDIO)
     include(FindPkgConfig)
     if(PkgConfig_FOUND)
         pkg_check_modules(LIBAVCODEC QUIET IMPORTED_TARGET libavcodec)
+        pkg_check_modules(LIBAVDEVICE QUIET IMPORTED_TARGET libavdevice)
         pkg_check_modules(LIBAVFORMAT QUIET IMPORTED_TARGET libavformat)
         pkg_check_modules(LIBAVUTIL QUIET IMPORTED_TARGET libavutil)
         pkg_check_modules(LIBSWRESAMPLE QUIET IMPORTED_TARGET libswresample)
+        pkg_check_modules(LIBSWSCALE QUIET IMPORTED_TARGET libswscale)
     endif()
     if(LIBAVCODEC_FOUND AND LIBAVFORMAT_FOUND AND LIBAVUTIL_FOUND)
         set(FFMPEG_FOUND TRUE)
         add_compile_definitions(MOQ2TS_HAVE_LIBAV)
+        if(LIBAVDEVICE_FOUND AND LIBSWRESAMPLE_FOUND AND LIBSWSCALE_FOUND)
+            add_compile_definitions(MOQ2TS_HAVE_LIBAV_CAPTURE)
+        endif()
     else()
         set(FFMPEG_FOUND FALSE)
         message(WARNING "libav libraries were not found via pkg-config. Install libavcodec-dev/libavformat-dev/libavutil-dev for optional transcoding support.")
@@ -119,6 +132,7 @@ set(SOURCES
     src/main.cpp
     src/app/MainWindow.cpp
     src/media/LivePipeline.cpp
+    src/media/LibavCaptureSource.cpp
     src/media/M2tsPacketizer.cpp
     src/media/MsftsMuxer.cpp
     src/publish/MoqxrPublisher.cpp
@@ -128,6 +142,7 @@ set(HEADERS
     src/app/MainWindow.h
     src/app/PublishConfig.h
     src/media/LivePipeline.h
+    src/media/LibavCaptureSource.h
     src/media/M2tsPacketizer.h
     src/media/MsftsMuxer.h
     src/publish/MoqxrPublisher.h
@@ -155,10 +170,16 @@ if(OPENH264_FOUND)
 endif()
 
 if(FFMPEG_FOUND)
-    target_include_directories(moq2ts-publisher PRIVATE ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS} ${LIBSWRESAMPLE_INCLUDE_DIRS})
+    target_include_directories(moq2ts-publisher PRIVATE ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVDEVICE_INCLUDE_DIRS} ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS} ${LIBSWRESAMPLE_INCLUDE_DIRS} ${LIBSWSCALE_INCLUDE_DIRS})
     target_link_libraries(moq2ts-publisher PRIVATE PkgConfig::LIBAVCODEC PkgConfig::LIBAVFORMAT PkgConfig::LIBAVUTIL)
+    if(LIBAVDEVICE_FOUND)
+        target_link_libraries(moq2ts-publisher PRIVATE PkgConfig::LIBAVDEVICE)
+    endif()
     if(LIBSWRESAMPLE_FOUND)
         target_link_libraries(moq2ts-publisher PRIVATE PkgConfig::LIBSWRESAMPLE)
+    endif()
+    if(LIBSWSCALE_FOUND)
+        target_link_libraries(moq2ts-publisher PRIVATE PkgConfig::LIBSWSCALE)
     endif()
 endif()
 

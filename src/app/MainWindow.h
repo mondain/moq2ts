@@ -45,6 +45,7 @@ private slots:
     void handleStop();
     void selectVideoSource();
     void selectAudioSource();
+    void refreshCaptureDevices();
 
 private:
     PublishConfig currentConfig() const;
@@ -56,6 +57,8 @@ private:
     QLineEdit* streamNameEdit = nullptr;
     QLineEdit* videoSourceEdit = nullptr;
     QLineEdit* audioSourceEdit = nullptr;
+    QComboBox* cameraSourceCombo = nullptr;
+    QComboBox* microphoneSourceCombo = nullptr;
 
     QSpinBox* widthSpin = nullptr;
     QSpinBox* heightSpin = nullptr;

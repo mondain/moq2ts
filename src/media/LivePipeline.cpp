@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QThread>
 
+#include "LibavCaptureSource.h"
 #include "MsftsMuxer.h"
 
 namespace moq2ts {
@@ -34,8 +35,9 @@ void LivePipeline::start(const PublishConfig& cfg, MoqxrPublisher* publisher) {
     m_publisher = publisher;
     m_running.store(true, std::memory_order_release);
 
-    if (cfg.videoSource.isEmpty() && cfg.audioSource.isEmpty()) {
-        emit error(QStringLiteral("An M2TS source is required."));
+    const bool hasCaptureSource = !cfg.cameraDeviceId.isEmpty() || !cfg.microphoneDeviceId.isEmpty();
+    if (cfg.videoSource.isEmpty() && cfg.audioSource.isEmpty() && !hasCaptureSource) {
+        emit error(QStringLiteral("An M2TS source or capture device is required."));
         m_running.store(false, std::memory_order_release);
         return;
     }
@@ -65,6 +67,69 @@ void LivePipeline::runLoop() {
     if (!m_publisher) {
         emit error(QStringLiteral("Pipeline is missing publisher."));
         m_running.store(false, std::memory_order_release);
+        return;
+    }
+
+    if ((m_config.videoSource.isEmpty() && m_config.audioSource.isEmpty()) &&
+        (!m_config.cameraDeviceId.isEmpty() || !m_config.microphoneDeviceId.isEmpty())) {
+        LibavCaptureSource capture(m_config);
+        QString captureError;
+        if (!capture.open(&captureError)) {
+            emit error(captureError);
+            m_running.store(false, std::memory_order_release);
+            return;
+        }
+
+        const int packetsPerObject = std::max(1, m_config.targetSegmentBytes / capture.packetSize());
+        const QString trackName = m_config.streamName.isEmpty() ? QStringLiteral("m2ts") : m_config.streamName;
+        const QByteArray catalog = MsftsMuxer::catalogJson({
+            .track = trackName,
+            .packetSize = capture.packetSize(),
+            .packetsPerObject = packetsPerObject,
+            .programNumber = capture.programNumber(),
+            .pmtPid = capture.pmtPid(),
+            .pcrPid = capture.pcrPid(),
+            .timestampMode = QStringLiteral("none"),
+            .initData = capture.initData(),
+        });
+
+        int64_t objects = 0;
+        int64_t bytes = 0;
+        auto nextObject = [this, &capture, packetsPerObject, trackName, &objects, &bytes]() -> std::optional<PublishedObject> {
+            if (!m_running.load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+
+            M2tsObject object;
+            QString readError;
+            if (!capture.readObject(packetsPerObject, &object, m_running, &readError)) {
+                if (!readError.isEmpty()) {
+                    emit error(readError);
+                }
+                return std::nullopt;
+            }
+
+            PublishedObject published;
+            published.trackName = trackName;
+            published.payload = std::move(object.payload);
+            published.groupId = object.groupId;
+            published.objectId = object.objectId;
+            published.mediaTimeUs = static_cast<std::uint64_t>(objects) * static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
+            published.mediaDurationUs = static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
+            ++objects;
+            bytes += object.payload.size();
+            emit stats(objects, bytes);
+            return published;
+        };
+
+        if (!m_publisher->publishLiveObjects(m_config, trackName, catalog, std::move(nextObject), m_running)) {
+            if (m_running.load(std::memory_order_acquire)) {
+                emit error(QStringLiteral("Failed to publish captured MSFTS live object stream."));
+            }
+        }
+
+        m_running.store(false, std::memory_order_release);
+        emit status(QStringLiteral("Pipeline exiting."));
         return;
     }
 

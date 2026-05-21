@@ -3,6 +3,18 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 
+#ifdef MOQ2TS_HAVE_QT_MULTIMEDIA
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QAudioDevice>
+#include <QCameraDevice>
+#include <QMediaDevices>
+#else
+#include <QAudio>
+#include <QAudioDeviceInfo>
+#include <QCameraInfo>
+#endif
+#endif
+
 namespace moq2ts {
 
 MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
@@ -34,6 +46,11 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     audioRowLayout->setContentsMargins(0, 0, 0, 0);
     audioRowLayout->addWidget(audioSourceEdit);
     audioRowLayout->addWidget(audioBrowse);
+
+    cameraSourceCombo = new QComboBox();
+    microphoneSourceCombo = new QComboBox();
+    auto* refreshDevicesButton = new QPushButton("Refresh capture devices");
+    QObject::connect(refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshCaptureDevices);
 
     widthSpin = new QSpinBox();
     widthSpin->setRange(160, 7680);
@@ -92,6 +109,9 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     form->addRow("Stream name", streamNameEdit);
     form->addRow("M2TS source", videoRow);
     form->addRow("Alternate M2TS source", audioRow);
+    form->addRow("Camera source", cameraSourceCombo);
+    form->addRow("Microphone source", microphoneSourceCombo);
+    form->addRow("", refreshDevicesButton);
     form->addRow("Video width", widthSpin);
     form->addRow("Video height", heightSpin);
     form->addRow("Video frame rate", fpsSpin);
@@ -131,6 +151,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     QObject::connect(startButton, &QPushButton::clicked, this, &MainWindow::handleStart);
     QObject::connect(stopButton, &QPushButton::clicked, this, &MainWindow::handleStop);
 
+    refreshCaptureDevices();
     logBrowser->append("Ready to publish.");
 
     setUiEnabled(true);
@@ -142,6 +163,8 @@ void MainWindow::setUiEnabled(bool enabled) {
     streamNameEdit->setEnabled(enabled);
     videoSourceEdit->setEnabled(enabled);
     audioSourceEdit->setEnabled(enabled);
+    cameraSourceCombo->setEnabled(enabled);
+    microphoneSourceCombo->setEnabled(enabled);
     widthSpin->setEnabled(enabled);
     heightSpin->setEnabled(enabled);
     fpsSpin->setEnabled(enabled);
@@ -175,6 +198,48 @@ void MainWindow::selectAudioSource() {
     }
 }
 
+void MainWindow::refreshCaptureDevices() {
+    cameraSourceCombo->clear();
+    microphoneSourceCombo->clear();
+
+    cameraSourceCombo->addItem("No camera selected", QString());
+    microphoneSourceCombo->addItem("No microphone selected", QString());
+
+#ifdef MOQ2TS_HAVE_QT_MULTIMEDIA
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const auto videoInputs = QMediaDevices::videoInputs();
+    for (const QCameraDevice& device : videoInputs) {
+        cameraSourceCombo->addItem(device.description(), QString::fromUtf8(device.id()));
+    }
+
+    const auto audioInputs = QMediaDevices::audioInputs();
+    for (const QAudioDevice& device : audioInputs) {
+        microphoneSourceCombo->addItem(device.description(), QString::fromUtf8(device.id()));
+    }
+#else
+    const auto cameras = QCameraInfo::availableCameras();
+    for (const QCameraInfo& camera : cameras) {
+        cameraSourceCombo->addItem(camera.description(), camera.deviceName());
+    }
+
+    const auto microphones = QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
+    for (const QAudioDeviceInfo& microphone : microphones) {
+        microphoneSourceCombo->addItem(microphone.deviceName(), microphone.deviceName());
+    }
+#endif
+
+    if (cameraSourceCombo->count() == 1) {
+        cameraSourceCombo->setItemText(0, "No camera detected");
+    }
+    if (microphoneSourceCombo->count() == 1) {
+        microphoneSourceCombo->setItemText(0, "No microphone detected");
+    }
+#else
+    cameraSourceCombo->setItemText(0, "Qt Multimedia unavailable");
+    microphoneSourceCombo->setItemText(0, "Qt Multimedia unavailable");
+#endif
+}
+
 PublishConfig MainWindow::currentConfig() const {
     PublishConfig cfg;
     cfg.moqEndpoint = endpointEdit->text().trimmed();
@@ -182,6 +247,8 @@ PublishConfig MainWindow::currentConfig() const {
     cfg.streamName = streamNameEdit->text().trimmed();
     cfg.videoSource = videoSourceEdit->text().trimmed();
     cfg.audioSource = audioSourceEdit->text().trimmed();
+    cfg.cameraDeviceId = cameraSourceCombo->currentData().toString();
+    cfg.microphoneDeviceId = microphoneSourceCombo->currentData().toString();
 
     cfg.videoWidth = widthSpin->value();
     cfg.videoHeight = heightSpin->value();
@@ -207,8 +274,9 @@ PublishConfig MainWindow::currentConfig() const {
 void MainWindow::handleStart() {
     const auto cfg = currentConfig();
 
-    if (cfg.videoSource.isEmpty() && cfg.audioSource.isEmpty()) {
-        QMessageBox::warning(this, "Missing source", "At least one of Video or Audio source must be set.");
+    if (cfg.videoSource.isEmpty() && cfg.audioSource.isEmpty() &&
+        cfg.cameraDeviceId.isEmpty() && cfg.microphoneDeviceId.isEmpty()) {
+        QMessageBox::warning(this, "Missing source", "Select an M2TS file/pipe or a camera/microphone capture device.");
         return;
     }
 

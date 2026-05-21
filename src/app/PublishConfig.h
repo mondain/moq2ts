@@ -16,6 +16,8 @@ struct PublishConfig {
 
     QString videoSource = QString(); // M2TS file/pipe/URL for H.264 source
     QString audioSource = QString(); // M2TS file/pipe/URL for audio source (optional)
+    QString cameraDeviceId = QString(); // UI-selected capture device id
+    QString microphoneDeviceId = QString(); // UI-selected capture device id
 
     int videoWidth = 1920;
     int videoHeight = 1080;
