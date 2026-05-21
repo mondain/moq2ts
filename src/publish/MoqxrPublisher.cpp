@@ -114,6 +114,7 @@ bool MoqxrPublisher::connectMock(const PublishConfig& cfg) {
 
 bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
                                         const QString& mediaTrackName,
+                                        const QStringList& sideTrackNames,
                                         const QByteArray& catalog,
                                         std::function<std::optional<PublishedObject>()> nextObject,
                                         std::atomic<bool>& running) {
@@ -139,6 +140,9 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
         openmoq::publisher::LiveObjectSource source;
         source.tracks.push_back({.track_name = "catalog"});
         source.tracks.push_back({.track_name = mediaTrackName.toStdString()});
+        for (const QString& trackName : sideTrackNames) {
+            source.tracks.push_back({.track_name = trackName.toStdString()});
+        }
 
         bool catalogSent = false;
         source.next_object = [catalogSent, catalog, nextObject = std::move(nextObject)]() mutable -> std::optional<openmoq::publisher::LiveObject> {
@@ -198,6 +202,7 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
 #else
     Q_UNUSED(cfg);
     Q_UNUSED(mediaTrackName);
+    Q_UNUSED(sideTrackNames);
     return publishLiveObjectsMock(catalog, std::move(nextObject), running, cfg.fragmentDurationMs);
 #endif
 }

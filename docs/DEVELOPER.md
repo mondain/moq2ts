@@ -11,7 +11,8 @@ media publishing. It currently provides:
 4. Program-level packet filtering for selected MPEG-TS programs
 5. Camera and microphone enumeration through Qt Multimedia
 6. In-process camera/microphone capture through libavdevice/libavformat
-7. Publication through an adapter that defaults to a deterministic mock path
+7. MSF timeline side-track publication for wall-clock correlation
+8. Publication through an adapter that defaults to a deterministic mock path
 
 ## Runtime flow
 
@@ -33,8 +34,13 @@ media publishing. It currently provides:
   objects to PAT, selected PMT, selected PCR PID, and that program's elementary
   PIDs. Packets from other programs and null packets are not published.
 - `MsftsMuxer` builds the MSF catalog with `packaging: "m2ts"`.
+- `MsftsMuxer` also adds a `<stream>.timeline` track with
+  `packaging: "msf-timeline"`.
 - Whole source packets are grouped into MOQT Object payloads and exposed to
   `MoqxrPublisher::publishLiveObjects(...)`.
+- `LivePipeline` interleaves timeline objects at stream start and roughly once
+  per second. These timeline objects map the most recent media object to Unix
+  wall-clock time in microseconds.
 
 ## File-level map
 
@@ -62,6 +68,7 @@ media publishing. It currently provides:
 
 - `src/media/MsftsMuxer.*`
   - Generates a compact MSF catalog for the `m2ts` packaging value.
+  - Adds an optional `msf-timeline` side-track catalog entry.
 
 - `src/publish/MoqxrPublisher.*`
   - Provides `IMoqOutput` interface.
@@ -111,6 +118,68 @@ offset 4.
 For an MPTS input, `m2tsProgramNumber` identifies the selected program. The
 published media track is program-filtered; it is not a raw pass-through of every
 PID in the source multiplex.
+
+## Timeline track
+
+The timeline track is separate from the M2TS media track so media object payloads
+remain draft-MSFTS-clean. The catalog entry looks like:
+
+```json
+{
+  "name": "sample-stream.timeline",
+  "packaging": "msf-timeline",
+  "timescale": 1000000,
+  "clock": "unix",
+  "clockUnit": "microseconds",
+  "referenceTrack": "sample-stream",
+  "updatePolicy": {
+    "mode": "periodic",
+    "intervalMs": 1000
+  }
+}
+```
+
+Timeline object payloads are compact JSON:
+
+```json
+{
+  "version": 1,
+  "type": "timeline",
+  "clock": {
+    "kind": "unix",
+    "unixTimeUs": "1779416505123456"
+  },
+  "sender": {
+    "monotonicTimeUs": "428300012345",
+    "timebase": "steady"
+  },
+  "reference": {
+    "track": "sample-stream",
+    "groupId": "0",
+    "objectId": "48",
+    "mediaTimeUs": "12000000",
+    "pcrPid": 256,
+    "pcr": {
+      "pid": 256,
+      "base90k": "1080000",
+      "extension27m": 0
+    }
+  },
+  "mapping": {
+    "mediaTimeUs": "12000000",
+    "wallClockUnixUs": "1779416505123456",
+    "rateNumerator": 1,
+    "rateDenominator": 1
+  }
+}
+```
+
+Large integer timestamps are encoded as JSON strings to avoid precision loss in
+JavaScript receivers.
+
+When the referenced media object contains a PCR on the selected PCR PID, the
+timeline reference includes the parsed MPEG-TS PCR base and extension. `base90k`
+is encoded as a JSON string to avoid precision loss in JavaScript receivers.
 
 ## Runtime operational guidance
 

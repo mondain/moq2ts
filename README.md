@@ -31,6 +31,7 @@ The application targets:
 - Camera and microphone enumeration through Qt Multimedia when available
 - In-process libavdevice capture path for selected camera/microphone devices
 - M2TS program selection for publishing one program/track from an MPTS source
+- MSF timeline side track for wall-clock correlation
 - Tunable codec and bitrate settings
 - Fragment size control and pacing
 - Status/log output and basic counters
@@ -87,6 +88,9 @@ artifacts under `build/install`.
   Media objects include PAT, the selected PMT, the selected PCR PID, and the
   elementary PIDs for that program. Packets for other programs and null packets
   are dropped before publication.
+- **Timeline track**: each media track gets a `<stream>.timeline` side track
+  with `packaging: "msf-timeline"`. Timeline objects map media object
+  `mediaTimeUs` to Unix wall-clock microseconds without modifying M2TS payloads.
 - **Encoding**: OpenH264/libav/libopus dependencies are present for in-process
   encoder work. The current live path expects a conforming multiplexed M2TS
   source and never shells out to the `ffmpeg` application.

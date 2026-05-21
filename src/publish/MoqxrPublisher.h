@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QMutex>
 #include <QObject>
+#include <QStringList>
 
 #include <atomic>
 #include <cstdint>
@@ -29,6 +30,7 @@ public:
     virtual bool connect(const PublishConfig& cfg) = 0;
     virtual bool publishLiveObjects(const PublishConfig& cfg,
                                     const QString& mediaTrackName,
+                                    const QStringList& sideTrackNames,
                                     const QByteArray& catalog,
                                     std::function<std::optional<PublishedObject>()> nextObject,
                                     std::atomic<bool>& running) = 0;
@@ -45,6 +47,7 @@ public:
     bool connect(const PublishConfig& cfg) override;
     bool publishLiveObjects(const PublishConfig& cfg,
                             const QString& mediaTrackName,
+                            const QStringList& sideTrackNames,
                             const QByteArray& catalog,
                             std::function<std::optional<PublishedObject>()> nextObject,
                             std::atomic<bool>& running) override;

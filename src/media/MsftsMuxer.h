@@ -14,6 +14,8 @@ struct MsftsCatalog {
     int pcrPid = -1;
     QString timestampMode = QStringLiteral("none");
     QByteArray initData;
+    QString timelineTrack;
+    int timelineIntervalMs = 1000;
 };
 
 class MsftsMuxer {
