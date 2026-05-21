@@ -1,0 +1,66 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Native build outputs
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.o
+*.obj
+*.lo
+*.la
+*.lai
+
+# Qt generated files
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+.qmake.stash
+
+# Package/install artifacts
+_CPack_Packages/
+*.deb
+*.rpm
+*.tar.gz
+*.tgz
+*.zip
+*.AppImage
+*.dmg
+
+# Runtime logs and local captures
+*.log
+logs/
+captures/
+recordings/
+*.ts
+*.m2ts
+*.mts
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
