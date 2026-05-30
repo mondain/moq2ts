@@ -16,6 +16,16 @@ if ! grep -q 'useMockTransport' "$PUBLISHER_SOURCE"; then
   exit 1
 fi
 
+if ! grep -q 'Mock publisher builds only accept mock:// endpoints' "$PUBLISHER_SOURCE"; then
+  printf 'mock publisher builds should reject real relay endpoints instead of pretending they are connected\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'Set MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF' "$PUBLISHER_SOURCE"; then
+  printf 'mock publisher rejection should tell users how to build real relay support\n' >&2
+  exit 1
+fi
+
 if ! grep -q 'mock://local' "$CONFIG_HEADER"; then
   printf 'default publish config should avoid connecting to a relay until one is selected\n' >&2
   exit 1

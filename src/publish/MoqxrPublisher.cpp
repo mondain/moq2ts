@@ -17,11 +17,11 @@
 
 namespace {
 
-#ifdef MOQ2TS_HAS_MOQXR
 bool useMockTransport(const moq2ts::PublishConfig& cfg) {
     return cfg.moqEndpoint.trimmed().startsWith(QStringLiteral("mock://"), Qt::CaseInsensitive);
 }
 
+#ifdef MOQ2TS_HAS_MOQXR
 openmoq::publisher::transport::EndpointConfig parseEndpoint(const QString& rawEndpoint) {
     using namespace openmoq::publisher::transport;
 
@@ -109,6 +109,10 @@ bool MoqxrPublisher::connect(const PublishConfig& cfg) {
     emit connectionStateChanged(true, QString("moqxr publisher configured for %1; namespace=%2 stream=%3").arg(m_endpoint, m_namespace, m_streamName));
     return true;
 #else
+    if (!useMockTransport(cfg)) {
+        emit publishError("Mock publisher builds only accept mock:// endpoints. Set MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF and rebuild to publish to a real relay.");
+        return false;
+    }
     return connectMock(cfg);
 #endif
 }
