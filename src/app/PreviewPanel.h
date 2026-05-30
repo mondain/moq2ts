@@ -29,7 +29,6 @@ public slots:
     void handleAudioLevels(double left, double right);
 
 signals:
-    void startWorker(const moq2ts::PublishConfig& config);
     void stopWorker();
 
 private slots:

@@ -89,7 +89,6 @@ void PreviewPanel::startPreview() {
     m_worker = new LibavPreviewWorker();
     m_worker->moveToThread(m_thread);
 
-    QObject::connect(this, &PreviewPanel::startWorker, m_worker, &LibavPreviewWorker::start);
     QObject::connect(this, &PreviewPanel::stopWorker, m_worker, &LibavPreviewWorker::stop, Qt::DirectConnection);
     QObject::connect(m_worker, &LibavPreviewWorker::videoFrameReady, this, &PreviewPanel::handleVideoFrame);
     QObject::connect(m_worker, &LibavPreviewWorker::audioLevelsChanged, this, &PreviewPanel::handleAudioLevels);
@@ -106,7 +105,9 @@ void PreviewPanel::startPreview() {
     handlePreviewStatus(QStringLiteral("Starting preview..."));
 
     m_thread->start();
-    QMetaObject::invokeMethod(this, [this]() { emit startWorker(m_config); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_worker, [worker = m_worker, config = m_config]() {
+        worker->start(config);
+    }, Qt::QueuedConnection);
 }
 
 void PreviewPanel::stopPreview() {

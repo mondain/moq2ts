@@ -66,6 +66,16 @@ if ! grep -q 'Qt::DirectConnection' "$PREVIEW_PANEL_CPP"; then
   exit 1
 fi
 
+if ! grep -q 'QMetaObject::invokeMethod(m_worker' "$PREVIEW_PANEL_CPP"; then
+  printf 'preview start should queue directly onto the worker object without an unregistered PublishConfig signal argument\n' >&2
+  exit 1
+fi
+
+if grep -q 'emit startWorker' "$PREVIEW_PANEL_CPP"; then
+  printf 'preview start should not emit PublishConfig across threads without metatype registration\n' >&2
+  exit 1
+fi
+
 if ! grep -q 'setPreviewCallbacks' "$CAPTURE_SOURCE" "$LIVE_PIPELINE_CPP"; then
   printf 'publishing capture path should feed preview from the same decoded frames\n' >&2
   exit 1
