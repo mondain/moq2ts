@@ -189,6 +189,13 @@ void LivePipeline::runLoop() {
     if ((m_config.videoSource.isEmpty() && m_config.audioSource.isEmpty()) &&
         (!m_config.cameraDeviceId.isEmpty() || !m_config.microphoneDeviceId.isEmpty())) {
         LibavCaptureSource capture(m_config);
+        capture.setPreviewCallbacks(
+            [this](const QImage& image) {
+                emit previewVideoFrame(image);
+            },
+            [this](double left, double right) {
+                emit previewAudioLevels(left, right);
+            });
         QString captureError;
         if (!capture.open(&captureError)) {
             emit error(captureError);

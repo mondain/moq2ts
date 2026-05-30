@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QByteArray>
+#include <QImage>
 #include <QList>
 #include <QString>
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include "../app/PublishConfig.h"
@@ -28,6 +30,8 @@ public:
 
     bool open(QString* error);
     bool readObject(int packetsPerObject, M2tsObject* object, std::atomic<bool>& running, QString* error);
+    void setPreviewCallbacks(std::function<void(const QImage&)> videoFrameCallback,
+                             std::function<void(double, double)> audioLevelsCallback);
 
     int packetSize() const;
     int programNumber() const;

@@ -2,6 +2,7 @@
 
 #include <QLabel>
 #include <QPushButton>
+#include <QTabWidget>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -15,6 +16,7 @@
 #include <QSpinBox>
 
 #include "PublishConfig.h"
+#include "PreviewPanel.h"
 
 class QLabel;
 class QPushButton;
@@ -23,6 +25,7 @@ class QLineEdit;
 class QComboBox;
 class QSpinBox;
 class QCheckBox;
+class QTabWidget;
 
 namespace moq2ts {
 
@@ -30,6 +33,7 @@ class MainWindow final : public QWidget {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    PreviewPanel* previewPanelWidget() const;
 
 signals:
     void startRequested(const moq2ts::PublishConfig& config);
@@ -50,8 +54,12 @@ private slots:
 private:
     PublishConfig currentConfig() const;
     void setUiEnabled(bool enabled);
+    void updatePreviewConfig();
 
 private:
+    QTabWidget* tabs = nullptr;
+    PreviewPanel* previewPanel = nullptr;
+
     QLineEdit* endpointEdit = nullptr;
     QLineEdit* namespaceEdit = nullptr;
     QLineEdit* streamNameEdit = nullptr;

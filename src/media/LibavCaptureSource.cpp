@@ -1,12 +1,15 @@
 #include "LibavCaptureSource.h"
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QtGlobal>
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
@@ -193,6 +196,7 @@ struct LibavCaptureSource::Impl {
         AVStream* outputStream = nullptr;
         AVAudioFifo* audioFifo = nullptr;
         SwsContext* sws = nullptr;
+        SwsContext* previewSws = nullptr;
         SwrContext* swr = nullptr;
         int64_t nextAudioPts = 0;
         int inputStreamIndex = -1;
@@ -205,6 +209,8 @@ struct LibavCaptureSource::Impl {
     AVIOContext* outputIo = nullptr;
     unsigned char* outputIoBuffer = nullptr;
     bool headerWritten = false;
+    std::function<void(const QImage&)> videoFrameCallback;
+    std::function<void(double, double)> audioLevelsCallback;
 
     ~Impl() {
         if (outputFormat && headerWritten) {
@@ -221,6 +227,9 @@ struct LibavCaptureSource::Impl {
         for (auto& stream : streams) {
             if (stream->sws) {
                 sws_freeContext(stream->sws);
+            }
+            if (stream->previewSws) {
+                sws_freeContext(stream->previewSws);
             }
             if (stream->swr) {
                 swr_free(&stream->swr);
@@ -289,6 +298,12 @@ struct LibavCaptureSource::Impl {
         extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidValue);
         pumpUntilInitData();
         return true;
+    }
+
+    void setPreviewCallbacks(std::function<void(const QImage&)> videoCallback,
+                             std::function<void(double, double)> audioCallback) {
+        videoFrameCallback = std::move(videoCallback);
+        audioLevelsCallback = std::move(audioCallback);
     }
 
     bool addVideo(QString* error) {
@@ -561,7 +576,89 @@ struct LibavCaptureSource::Impl {
         return true;
     }
 
+    void emitVideoPreview(StreamState* stream, AVFrame* frame) {
+        if (!videoFrameCallback || frame->width <= 0 || frame->height <= 0) {
+            return;
+        }
+        QImage image(frame->width, frame->height, QImage::Format_ARGB32);
+        uint8_t* dstData[4] = {image.bits(), nullptr, nullptr, nullptr};
+        int dstLinesize[4] = {image.bytesPerLine(), 0, 0, 0};
+        stream->previewSws = sws_getCachedContext(stream->previewSws,
+                                                  frame->width,
+                                                  frame->height,
+                                                  static_cast<AVPixelFormat>(frame->format),
+                                                  frame->width,
+                                                  frame->height,
+                                                  AV_PIX_FMT_BGRA,
+                                                  SWS_BILINEAR,
+                                                  nullptr,
+                                                  nullptr,
+                                                  nullptr);
+        if (!stream->previewSws) {
+            return;
+        }
+        sws_scale(stream->previewSws, frame->data, frame->linesize, 0, frame->height, dstData, dstLinesize);
+        videoFrameCallback(image.copy());
+    }
+
+    static double previewSampleValue(AVSampleFormat format, const uint8_t* sample) {
+        switch (format) {
+        case AV_SAMPLE_FMT_U8:
+        case AV_SAMPLE_FMT_U8P:
+            return (static_cast<int>(*sample) - 128) / 128.0;
+        case AV_SAMPLE_FMT_S16:
+        case AV_SAMPLE_FMT_S16P:
+            return *reinterpret_cast<const int16_t*>(sample) / 32768.0;
+        case AV_SAMPLE_FMT_S32:
+        case AV_SAMPLE_FMT_S32P:
+            return *reinterpret_cast<const int32_t*>(sample) / 2147483648.0;
+        case AV_SAMPLE_FMT_FLT:
+        case AV_SAMPLE_FMT_FLTP:
+            return *reinterpret_cast<const float*>(sample);
+        case AV_SAMPLE_FMT_DBL:
+        case AV_SAMPLE_FMT_DBLP:
+            return *reinterpret_cast<const double*>(sample);
+        default:
+            return 0.0;
+        }
+    }
+
+    void emitAudioPreview(AVFrame* frame) {
+        if (!audioLevelsCallback) {
+            return;
+        }
+        const auto format = static_cast<AVSampleFormat>(frame->format);
+        const int channels = std::max(1, frame->ch_layout.nb_channels);
+        const int samples = std::max(0, frame->nb_samples);
+        const int bytesPerSample = av_get_bytes_per_sample(format);
+        if (samples == 0 || bytesPerSample <= 0) {
+            return;
+        }
+
+        const bool planar = av_sample_fmt_is_planar(format) != 0;
+        double sums[2] = {0.0, 0.0};
+        for (int sample = 0; sample < samples; ++sample) {
+            for (int outChannel = 0; outChannel < 2; ++outChannel) {
+                const int channel = std::min(outChannel, channels - 1);
+                const uint8_t* ptr = nullptr;
+                if (planar) {
+                    ptr = frame->extended_data[channel] + sample * bytesPerSample;
+                } else {
+                    ptr = frame->extended_data[0] + ((sample * channels) + channel) * bytesPerSample;
+                }
+                const double value = previewSampleValue(format, ptr);
+                sums[outChannel] += value * value;
+            }
+        }
+
+        const double left = std::sqrt(sums[0] / samples);
+        const double right = std::sqrt(sums[1] / samples);
+        audioLevelsCallback(std::clamp(left, 0.0, 1.0), std::clamp(right, 0.0, 1.0));
+    }
+
     bool encodeAudioFrame(StreamState* stream, AVFrame* inputFrame, QString* error) {
+        emitAudioPreview(inputFrame);
+
         AVChannelLayout inputLayout = {};
         if (inputFrame->ch_layout.nb_channels > 0) {
             av_channel_layout_copy(&inputLayout, &inputFrame->ch_layout);
@@ -686,6 +783,8 @@ struct LibavCaptureSource::Impl {
             return encodeAudioFrame(stream, inputFrame, error);
         }
 
+        emitVideoPreview(stream, inputFrame);
+
         FramePtr frame = makeFrame();
         frame->format = stream->encoder->pix_fmt;
         frame->width = stream->encoder->width;
@@ -735,6 +834,8 @@ struct LibavCaptureSource::Impl {
         }
         return false;
     }
+
+    void setPreviewCallbacks(std::function<void(const QImage&)>, std::function<void(double, double)>) {}
 #endif
 };
 
@@ -830,6 +931,11 @@ bool LibavCaptureSource::open(QString* error) {
 
 bool LibavCaptureSource::readObject(int packetsPerObject, M2tsObject* object, std::atomic<bool>& running, QString* error) {
     return m_impl->readObject(packetsPerObject, object, running, error);
+}
+
+void LibavCaptureSource::setPreviewCallbacks(std::function<void(const QImage&)> videoFrameCallback,
+                                             std::function<void(double, double)> audioLevelsCallback) {
+    m_impl->setPreviewCallbacks(std::move(videoFrameCallback), std::move(audioLevelsCallback));
 }
 
 int LibavCaptureSource::packetSize() const {

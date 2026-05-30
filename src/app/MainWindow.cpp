@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QHBoxLayout>
+#include <QTabWidget>
 
 #include "../media/LibavCaptureSource.h"
 
@@ -26,6 +27,12 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     setMinimumSize(720, 560);
 
     auto* root = new QVBoxLayout(this);
+    tabs = new QTabWidget();
+    auto* configTab = new QWidget();
+    auto* configLayout = new QVBoxLayout(configTab);
+    auto* logsTab = new QWidget();
+    auto* logsLayout = new QVBoxLayout(logsTab);
+    previewPanel = new PreviewPanel();
 
     auto* form = new QFormLayout();
 
@@ -131,7 +138,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     form->addRow("", useLibAvCheck);
     form->addRow("", useOpusFallbackCheck);
 
-    root->addLayout(form);
+    configLayout->addLayout(form);
 
     auto* buttonRow = new QHBoxLayout();
     startButton = new QPushButton("Start publishing");
@@ -148,17 +155,34 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     logBrowser->setOpenExternalLinks(false);
     logBrowser->setPlaceholderText("Logs and pipeline events appear here.");
 
-    root->addLayout(buttonRow);
-    root->addWidget(statusLabel);
-    root->addWidget(logBrowser, 1);
+    configLayout->addLayout(buttonRow);
+    configLayout->addWidget(statusLabel);
+    configLayout->addStretch(1);
+    logsLayout->addWidget(logBrowser);
+    tabs->addTab(configTab, QStringLiteral("Config"));
+    tabs->addTab(previewPanel, QStringLiteral("Preview"));
+    tabs->addTab(logsTab, QStringLiteral("Logs"));
+    root->addWidget(tabs);
 
     QObject::connect(startButton, &QPushButton::clicked, this, &MainWindow::handleStart);
     QObject::connect(stopButton, &QPushButton::clicked, this, &MainWindow::handleStop);
+    QObject::connect(cameraSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(microphoneSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(heightSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(fpsSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(sampleRateSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(channelSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
 
     refreshCaptureDevices();
+    updatePreviewConfig();
     logBrowser->append("Ready to publish.");
 
     setUiEnabled(true);
+}
+
+PreviewPanel* MainWindow::previewPanelWidget() const {
+    return previewPanel;
 }
 
 void MainWindow::setUiEnabled(bool enabled) {
@@ -183,6 +207,7 @@ void MainWindow::setUiEnabled(bool enabled) {
     openh264Check->setEnabled(enabled);
     useLibAvCheck->setEnabled(enabled);
     useOpusFallbackCheck->setEnabled(enabled);
+    previewPanel->setControlsEnabled(enabled);
 
     startButton->setEnabled(enabled);
     stopButton->setEnabled(!enabled);
@@ -249,6 +274,7 @@ void MainWindow::refreshCaptureDevices() {
     if (microphoneSourceCombo->count() == 1) {
         microphoneSourceCombo->setItemText(0, "No microphone detected");
     }
+    updatePreviewConfig();
 }
 
 PublishConfig MainWindow::currentConfig() const {
@@ -284,6 +310,8 @@ PublishConfig MainWindow::currentConfig() const {
 
 void MainWindow::handleStart() {
     const auto cfg = currentConfig();
+    previewPanel->setConfig(cfg);
+    previewPanel->stopPreview();
 
     if (cfg.videoSource.isEmpty() && cfg.audioSource.isEmpty() &&
         cfg.cameraDeviceId.isEmpty() && cfg.microphoneDeviceId.isEmpty()) {
@@ -307,6 +335,12 @@ void MainWindow::handleStop() {
     emit stopRequested();
     statusLabel->setText("Stopping...");
     logBrowser->append(QString("%1 | Stop requested by user").arg(QDateTime::currentDateTime().toString(Qt::ISODate)));
+}
+
+void MainWindow::updatePreviewConfig() {
+    if (previewPanel) {
+        previewPanel->setConfig(currentConfig());
+    }
 }
 
 void MainWindow::onPublishStatus(const QString& message) {

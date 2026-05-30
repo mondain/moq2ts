@@ -136,8 +136,10 @@ endif()
 set(SOURCES
     src/main.cpp
     src/app/MainWindow.cpp
+    src/app/PreviewPanel.cpp
     src/media/LivePipeline.cpp
     src/media/LibavCaptureSource.cpp
+    src/media/LibavPreviewWorker.cpp
     src/media/M2tsPacketizer.cpp
     src/media/MsftsMuxer.cpp
     src/publish/MoqxrPublisher.cpp
@@ -150,9 +152,11 @@ endif()
 
 set(HEADERS
     src/app/MainWindow.h
+    src/app/PreviewPanel.h
     src/app/PublishConfig.h
     src/media/LivePipeline.h
     src/media/LibavCaptureSource.h
+    src/media/LibavPreviewWorker.h
     src/media/M2tsPacketizer.h
     src/media/MsftsMuxer.h
     src/publish/MoqxrPublisher.h

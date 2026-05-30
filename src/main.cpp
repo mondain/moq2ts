@@ -29,6 +29,8 @@ int main(int argc, char** argv) {
     QObject::connect(&pipeline, &moq2ts::LivePipeline::status, &window, &moq2ts::MainWindow::onPublishStatus);
     QObject::connect(&pipeline, &moq2ts::LivePipeline::error, &window, &moq2ts::MainWindow::onPublishError);
     QObject::connect(&pipeline, &moq2ts::LivePipeline::stats, &window, &moq2ts::MainWindow::onPublishStats);
+    QObject::connect(&pipeline, &moq2ts::LivePipeline::previewVideoFrame, window.previewPanelWidget(), &moq2ts::PreviewPanel::handleVideoFrame);
+    QObject::connect(&pipeline, &moq2ts::LivePipeline::previewAudioLevels, window.previewPanelWidget(), &moq2ts::PreviewPanel::handleAudioLevels);
     QObject::connect(&publisher, &moq2ts::MoqxrPublisher::connectionStateChanged,
                      [&](bool connected, const QString& message) {
                          Q_UNUSED(connected);

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <QImage>
 #include <QObject>
 
 #include "../app/PublishConfig.h"
@@ -25,6 +26,8 @@ signals:
     void status(const QString& message);
     void error(const QString& message);
     void stats(int64_t packets, int64_t bytes);
+    void previewVideoFrame(const QImage& image);
+    void previewAudioLevels(double left, double right);
 
 private:
     void runLoop();
