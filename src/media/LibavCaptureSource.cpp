@@ -814,8 +814,20 @@ struct LibavCaptureSource::Impl {
             return false;
         }
         sws_scale(stream->sws, inputFrame->data, inputFrame->linesize, 0, inputFrame->height, frame->data, frame->linesize);
-        frame->pts = inputFrame->best_effort_timestamp;
-        if (frame->pts == AV_NOPTS_VALUE) {
+        int64_t sourcePts = inputFrame->best_effort_timestamp;
+        if (sourcePts == AV_NOPTS_VALUE) {
+            sourcePts = inputFrame->pts;
+        }
+        if (sourcePts != AV_NOPTS_VALUE && stream->inputStream != nullptr) {
+            // Rescale the capture PTS from the input (e.g. V4L2, microsecond)
+            // timebase into the encoder timebase. Without this, libx264 sees
+            // huge inter-frame gaps, disables effective rate control, and
+            // encodes near-lossless -- flooding the transport far above the
+            // configured bitrate until the QUIC connection idle-times-out.
+            frame->pts = av_rescale_q(sourcePts,
+                                      stream->inputStream->time_base,
+                                      stream->encoder->time_base);
+        } else {
             frame->pts = nextObjectId;
         }
         return sendEncoderFrame(stream, frame.get(), "video", error);
