@@ -6,6 +6,8 @@
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName("moq2ts");
+    QCoreApplication::setApplicationName("moq2ts-publisher");
 
     moq2ts::MainWindow window;
     moq2ts::MoqxrPublisher publisher;

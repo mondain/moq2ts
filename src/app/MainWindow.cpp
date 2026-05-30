@@ -1,8 +1,12 @@
 #include "MainWindow.h"
 
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QHBoxLayout>
+#include <QSettings>
 #include <QTabWidget>
+
+#include <algorithm>
 
 #include "../media/LibavCaptureSource.h"
 
@@ -174,6 +178,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     QObject::connect(sampleRateSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
     QObject::connect(channelSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
 
+    loadPreferences();
     refreshCaptureDevices();
     updatePreviewConfig();
     logBrowser->append("Ready to publish.");
@@ -183,6 +188,11 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
 
 PreviewPanel* MainWindow::previewPanelWidget() const {
     return previewPanel;
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    savePreferences();
+    QWidget::closeEvent(event);
 }
 
 void MainWindow::setUiEnabled(bool enabled) {
@@ -308,8 +318,59 @@ PublishConfig MainWindow::currentConfig() const {
     return cfg;
 }
 
+void MainWindow::loadPreferences() {
+    QSettings settings;
+    endpointEdit->setText(settings.value(QStringLiteral("publish/endpoint"), endpointEdit->text()).toString());
+    namespaceEdit->setText(settings.value(QStringLiteral("publish/namespace"), namespaceEdit->text()).toString());
+    streamNameEdit->setText(settings.value(QStringLiteral("publish/stream"), streamNameEdit->text()).toString());
+
+    widthSpin->setValue(settings.value(QStringLiteral("video/width"), widthSpin->value()).toInt());
+    heightSpin->setValue(settings.value(QStringLiteral("video/height"), heightSpin->value()).toInt());
+    fpsSpin->setValue(settings.value(QStringLiteral("video/framerate"), fpsSpin->value()).toInt());
+    videoBitrateSpin->setValue(settings.value(QStringLiteral("video/bitrate"), videoBitrateSpin->value()).toInt());
+
+    sampleRateSpin->setValue(settings.value(QStringLiteral("audio/sampleRate"), sampleRateSpin->value()).toInt());
+    channelSpin->setValue(settings.value(QStringLiteral("audio/channels"), channelSpin->value()).toInt());
+    audioBitrateSpin->setValue(settings.value(QStringLiteral("audio/bitrate"), audioBitrateSpin->value()).toInt());
+    audioCodecCombo->setCurrentIndex(std::max(0, audioCodecCombo->findData(settings.value(QStringLiteral("audio/codec"), audioCodecCombo->currentData()).toInt())));
+
+    fragmentMsSpin->setValue(settings.value(QStringLiteral("fragment/durationMs"), fragmentMsSpin->value()).toInt());
+    fragmentBytesSpin->setValue(settings.value(QStringLiteral("fragment/targetBytes"), fragmentBytesSpin->value()).toInt());
+    programNumberSpin->setValue(settings.value(QStringLiteral("m2ts/program"), programNumberSpin->value()).toInt());
+
+    openh264Check->setChecked(settings.value(QStringLiteral("use/openh264"), openh264Check->isChecked()).toBool());
+    useLibAvCheck->setChecked(settings.value(QStringLiteral("use/libav"), useLibAvCheck->isChecked()).toBool());
+    useOpusFallbackCheck->setChecked(settings.value(QStringLiteral("use/libopusFallback"), useOpusFallbackCheck->isChecked()).toBool());
+}
+
+void MainWindow::savePreferences() const {
+    QSettings settings;
+    settings.setValue(QStringLiteral("publish/endpoint"), endpointEdit->text().trimmed());
+    settings.setValue(QStringLiteral("publish/namespace"), namespaceEdit->text().trimmed());
+    settings.setValue(QStringLiteral("publish/stream"), streamNameEdit->text().trimmed());
+
+    settings.setValue(QStringLiteral("video/width"), widthSpin->value());
+    settings.setValue(QStringLiteral("video/height"), heightSpin->value());
+    settings.setValue(QStringLiteral("video/framerate"), fpsSpin->value());
+    settings.setValue(QStringLiteral("video/bitrate"), videoBitrateSpin->value());
+
+    settings.setValue(QStringLiteral("audio/sampleRate"), sampleRateSpin->value());
+    settings.setValue(QStringLiteral("audio/channels"), channelSpin->value());
+    settings.setValue(QStringLiteral("audio/bitrate"), audioBitrateSpin->value());
+    settings.setValue(QStringLiteral("audio/codec"), audioCodecCombo->currentData().toInt());
+
+    settings.setValue(QStringLiteral("fragment/durationMs"), fragmentMsSpin->value());
+    settings.setValue(QStringLiteral("fragment/targetBytes"), fragmentBytesSpin->value());
+    settings.setValue(QStringLiteral("m2ts/program"), programNumberSpin->value());
+
+    settings.setValue(QStringLiteral("use/openh264"), openh264Check->isChecked());
+    settings.setValue(QStringLiteral("use/libav"), useLibAvCheck->isChecked());
+    settings.setValue(QStringLiteral("use/libopusFallback"), useOpusFallbackCheck->isChecked());
+}
+
 void MainWindow::handleStart() {
     const auto cfg = currentConfig();
+    savePreferences();
     previewPanel->setConfig(cfg);
     previewPanel->stopPreview();
 

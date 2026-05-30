@@ -26,6 +26,7 @@ class QComboBox;
 class QSpinBox;
 class QCheckBox;
 class QTabWidget;
+class QCloseEvent;
 
 namespace moq2ts {
 
@@ -34,6 +35,9 @@ class MainWindow final : public QWidget {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     PreviewPanel* previewPanelWidget() const;
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 signals:
     void startRequested(const moq2ts::PublishConfig& config);
@@ -54,6 +58,8 @@ private slots:
 private:
     PublishConfig currentConfig() const;
     void setUiEnabled(bool enabled);
+    void loadPreferences();
+    void savePreferences() const;
     void updatePreviewConfig();
 
 private:
