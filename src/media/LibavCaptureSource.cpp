@@ -25,18 +25,13 @@ namespace moq2ts {
 
 namespace {
 
-QString avError(int code) {
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+
+QString avError(int code) {
     char buffer[AV_ERROR_MAX_STRING_SIZE] = {0};
     av_strerror(code, buffer, sizeof(buffer));
     return QString::fromUtf8(buffer);
-#else
-    Q_UNUSED(code);
-    return QStringLiteral("libav capture support is not compiled in.");
-#endif
 }
-
-#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
 
 struct AvPacketDeleter {
     void operator()(AVPacket* packet) const {

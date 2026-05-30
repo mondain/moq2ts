@@ -71,7 +71,7 @@ Run:
 ```
 
 The script builds a Bookworm container image, compiles the app, and installs
-artifacts under `build/install`.
+artifacts under `build-bookworm/install`.
 
 ## Notes on codec paths
 
