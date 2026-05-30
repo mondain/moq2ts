@@ -18,7 +18,7 @@ The application targets:
 
 - `src/main.cpp`: Qt application bootstrap and signal wiring
 - `src/app/*`: UI and publish configuration model
-- `src/media/*`: media pipeline, TS/M2TS packetizer, and draft MSFTS catalog helpers
+- `src/media/*`: media pipeline, capture preview, TS/M2TS packetizer, and draft MSFTS catalog helpers
 - `src/publish/*`: MOQ publisher adapter (mock + local moqxr `publish_live_objects`)
 - `docker/*`: Bookworm container definition
 - `scripts/*`: build automation
@@ -28,7 +28,9 @@ The application targets:
 
 - Live configuration of endpoint/namespace/stream
 - Separate video and audio source selectors (M2TS file/pipe)
-- Camera and microphone enumeration through Qt Multimedia when available
+- Camera and microphone enumeration through libavdevice/platform capture APIs,
+  with Qt Multimedia fallback where enabled
+- Preview tab with decoded video preview and dB-scaled left/right audio meters
 - In-process libavdevice capture path for selected camera/microphone devices
 - M2TS program selection for publishing one program/track from an MPTS source
 - MSF timeline side track for wall-clock correlation
@@ -47,7 +49,8 @@ The application targets:
   - `libswscale-dev`
   - `libopus-dev`
 
-If third-party headers are unavailable, the app still builds using mock defaults.
+If third-party moqxr headers are unavailable, the app still builds using mock
+publisher defaults. Mock publisher builds only accept `mock://...` endpoints.
 
 ## Build locally
 
@@ -73,6 +76,27 @@ Run:
 The script builds a Bookworm container image, compiles the app, and installs
 artifacts under `build-bookworm/install`.
 
+The default Bookworm build uses the mock publisher. It is intended for local
+capture, muxing, preview, and object-generation testing:
+
+```text
+mock://local
+```
+
+Real relay URLs such as `https://moq-relay.red5.net:4433/moq` require a
+real-linked moqxr build:
+
+```bash
+MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF ./scripts/build-debian-bookworm.sh
+```
+
+The build script mounts a sibling `../moqxr` checkout into the container when it
+exists. Launch the packaged app with:
+
+```bash
+./build-bookworm/install/moq2ts-publisher-bookworm
+```
+
 ## Notes on codec paths
 
 - **MSFTS packaging**: media object payloads are raw source packets only. The app
@@ -94,10 +118,15 @@ artifacts under `build-bookworm/install`.
 - **Encoding**: OpenH264/libav/libopus dependencies are present for in-process
   encoder work. The current live path expects a conforming multiplexed M2TS
   source and never shells out to the `ffmpeg` application.
-- **Capture devices**: camera and microphone devices are listed in the UI when
-  Qt Multimedia is available. If no file/pipe source is provided, selected
-  devices are opened through libavdevice, encoded in-process, muxed to MPEG-TS
-  through libavformat, and published as MSFTS M2TS objects.
+- **Capture devices**: camera and microphone devices are listed in the UI through
+  libavdevice/platform capture APIs, with Qt Multimedia fallback where enabled.
+  If no file/pipe source is provided, selected devices are opened through
+  libavdevice, encoded in-process, muxed to MPEG-TS through libavformat, and
+  published as MSFTS M2TS objects.
+- **Preview**: the Preview tab can open selected camera/microphone devices before
+  publishing. During live capture publishing, the Preview tab is driven from the
+  same decoded frames and audio samples used by the encoder path. Audio meters
+  display RMS levels on a dBFS scale so normal speech is visible.
 
 ## moqxr integration
 
@@ -112,6 +141,9 @@ cmake -S . -B build \
 ```
 
 Mock mode remains available with `MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON`.
+
+Mock mode is explicit: endpoints must start with `mock://`. Entering a real
+relay URL in a mock build fails with an error instead of pretending to connect.
 
 ## Sequence diagrams
 

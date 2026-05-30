@@ -9,22 +9,29 @@ media publishing. It currently provides:
 2. Direct TS/M2TS source packet validation and objectization
 3. Catalog generation for `draft-gregoire-moq-msfts-00`
 4. Program-level packet filtering for selected MPEG-TS programs
-5. Camera and microphone enumeration through Qt Multimedia
+5. Camera and microphone enumeration through libavdevice/platform capture APIs
 6. In-process camera/microphone capture through libavdevice/libavformat
-7. MSF timeline side-track publication for wall-clock correlation
-8. Publication through an adapter that defaults to a deterministic mock path
+7. Preview tab for selected camera/microphone video and audio level verification
+8. MSF timeline side-track publication for wall-clock correlation
+9. Publication through an adapter that defaults to a deterministic mock path
 
 ## Runtime flow
 
 - The UI (`src/app/MainWindow.*`) builds a `PublishConfig` from operator input and
   emits `startRequested`.
-- The UI enumerates camera and microphone devices when Qt Multimedia is present.
-  These selections are stored in `PublishConfig`.
+- The UI enumerates camera and microphone devices through libavdevice/platform
+  capture APIs, with Qt Multimedia fallback where enabled. These selections are
+  stored in `PublishConfig`.
+- The Preview tab can start a preflight libav preview worker for selected
+  camera/microphone devices without connecting to a relay.
 - Main wires this into `LivePipeline` and `MoqxrPublisher`.
 - `LivePipeline` opens one TS/M2TS source and passes the selected program number
   to the packetizer. Program `0` means the first nonzero PAT program.
 - If no TS/M2TS file source is provided and a camera or microphone is selected,
   `LivePipeline` opens `LibavCaptureSource` instead.
+- While live capture publishing is running, `LibavCaptureSource` emits preview
+  video frames and audio RMS levels from the same decoded frames that feed the
+  encoder. The UI displays those levels on a dBFS meter scale.
 - `M2tsPacketizer` detects 188-byte TS or 192-byte M2TS source packets and
   validates sync bytes.
 - `LibavCaptureSource` opens selected devices through libavdevice, transcodes
@@ -47,6 +54,13 @@ media publishing. It currently provides:
 - `src/app/MainWindow.h/.cpp`
   - Qt UI and user controls.
   - Emits start/stop events and receives status/log callbacks.
+  - Owns the Config, Preview, and Logs tabs.
+
+- `src/app/PreviewPanel.h/.cpp`
+  - Displays decoded preview video frames.
+  - Displays left/right audio meters using dBFS scaling.
+  - Starts a preflight `LibavPreviewWorker` for selected devices and receives
+    live publishing preview callbacks from `LivePipeline`.
 
 - `src/media/LivePipeline.h/.cpp`
   - Packetizer setup, catalog publication, media object loop, and pacing.
@@ -65,6 +79,14 @@ media publishing. It currently provides:
   - Uses libavcodec for H.264/AAC/Opus encoding and libavformat for MPEG-TS
     muxing.
   - Emits the same `M2tsObject` shape as the file packetizer.
+  - Can emit preview `QImage` frames and audio RMS levels from the same decoded
+    input frames used for encoding.
+
+- `src/media/LibavPreviewWorker.*`
+  - Preflight capture preview worker.
+  - Opens selected libavdevice camera/microphone inputs without starting a
+    publisher session.
+  - Emits decoded video frames and left/right audio levels to `PreviewPanel`.
 
 - `src/media/MsftsMuxer.*`
   - Generates a compact MSF catalog for the `m2ts` packaging value.
@@ -83,11 +105,33 @@ media publishing. It currently provides:
 | Feature        | Toggle | Required to enable | Code path |
 |----------------|--------|-------------------|----------|
 | Mock publisher | `MOQ2TS_BUILD_WITH_MOCK_MOQXR` | none | default ON |
-| Device listing | auto-detected | Qt Multimedia | UI enumeration only |
+| Device listing | auto-detected | libavdevice/platform APIs or Qt Multimedia fallback | UI enumeration only |
 | Device capture | auto-detected | libavdevice/libswscale/libswresample | camera/mic to MPEG-TS |
 | OpenH264 path  | `MOQ2TS_ENABLE_OPENH264`     | libopenh264          | encoder integration |
 | libav path     | `MOQ2TS_ENABLE_LIBAV_AUDIO`  | libavcodec/libavformat | media integration |
 | libopus path   | `MOQ2TS_ENABLE_LIBOPUS`      | libopus              | Opus audio path |
+
+### Bookworm build modes
+
+The Bookworm script defaults to mock publisher mode:
+
+```bash
+./scripts/build-debian-bookworm.sh
+```
+
+Mock publisher mode is for local pipeline testing and only accepts endpoints
+starting with `mock://`, such as `mock://local`. A real relay URL in a mock build
+is rejected with an explicit error.
+
+To publish to a real relay, build against the sibling `../moqxr` checkout:
+
+```bash
+MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF ./scripts/build-debian-bookworm.sh
+```
+
+The script runs the container as the current user and mounts `../moqxr` read-only
+when the sibling checkout exists. Build output should remain owned by the current
+user under `build-bookworm`.
 
 ## Integrating the real moqxr API
 
@@ -104,6 +148,11 @@ Suggested mapping:
 - `connect(cfg)` -> store endpoint, namespace, and stream settings
 - `publishLiveObjects(...)` -> call `openmoq::publisher::Publisher::publish_live_objects`
 - `stop()` -> close session and flush buffers
+
+The real-linked path is compiled only when `MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF`.
+With the default mock build, `MoqxrPublisher::connect()` accepts only
+`mock://...` endpoints. This avoids confusing real relay URLs with successful
+local mock sessions.
 
 ## Draft MSFTS conformance notes
 
@@ -188,6 +237,11 @@ is encoded as a JSON string to avoid precision loss in JavaScript receivers.
 - If using separate files, treat as asynchronous tracks and apply track-level
   offset compensation at the sender.
 - For true live capture, replace file-based source URIs with capture endpoints.
+- Use the Preview tab before publishing to verify that the selected camera and
+  microphone are readable. During capture publishing, the Preview tab uses the
+  same decoded source frames and samples as the encoder path.
+- Normal speech should move the audio meters. The UI maps normalized RMS to a
+  `-60 dBFS` to `0 dBFS` display range instead of showing raw linear samples.
 
 ## Known limitations in this scaffold
 
