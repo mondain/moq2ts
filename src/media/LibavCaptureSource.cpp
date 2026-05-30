@@ -96,7 +96,7 @@ QString audioInputName(const QString& deviceId) {
 #endif
 }
 
-int writePacket(void* opaque, const uint8_t* buffer, int bufferSize) {
+int writePacket(void* opaque, uint8_t* buffer, int bufferSize) {
     auto* output = static_cast<QByteArray*>(opaque);
     output->append(reinterpret_cast<const char*>(buffer), bufferSize);
     return bufferSize;
