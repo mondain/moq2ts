@@ -10,7 +10,7 @@ enum class AudioCodecPreset {
 };
 
 struct PublishConfig {
-    QString moqEndpoint = "http://127.0.0.1:9000";
+    QString moqEndpoint = "mock://local";
     QString namespaceName = "live";
     QString streamName = "sample-stream";
 

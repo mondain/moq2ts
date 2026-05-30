@@ -13,8 +13,14 @@
 #include "openmoq/publisher/live_object.h"
 #include "openmoq/publisher/moq_draft.h"
 #include "openmoq/publisher/publisher_api.h"
+#endif
 
 namespace {
+
+#ifdef MOQ2TS_HAS_MOQXR
+bool useMockTransport(const moq2ts::PublishConfig& cfg) {
+    return cfg.moqEndpoint.trimmed().startsWith(QStringLiteral("mock://"), Qt::CaseInsensitive);
+}
 
 openmoq::publisher::transport::EndpointConfig parseEndpoint(const QString& rawEndpoint) {
     using namespace openmoq::publisher::transport;
@@ -40,7 +46,8 @@ openmoq::publisher::transport::EndpointConfig parseEndpoint(const QString& rawEn
             endpoint.path_explicit = true;
             authority = authority.substr(0, slash);
         } else if (hadHttps || hadHttp) {
-            endpoint.path = "/";
+            endpoint.path.clear();
+            endpoint.path.push_back('/');
             endpoint.path_explicit = true;
         }
         endpoint.transport = (hadHttps || hadHttp) ? TransportKind::kWebTransport : TransportKind::kRawQuic;
@@ -57,7 +64,9 @@ openmoq::publisher::transport::EndpointConfig parseEndpoint(const QString& rawEn
     }
     endpoint.port = static_cast<std::uint16_t>(port);
     if (endpoint.transport == TransportKind::kWebTransport && !endpoint.path_explicit) {
-        endpoint.path = "/moq";
+        endpoint.path.clear();
+        endpoint.path.push_back('/');
+        endpoint.path.append("moq");
         endpoint.path_explicit = true;
     }
     return endpoint;
@@ -72,10 +81,9 @@ openmoq::publisher::DraftVersion defaultDraftVersion() {
     return openmoq::publisher::DraftVersion::kDraft16;
 }
 
-} // namespace
-#else
-// mock publisher is compiled by default when moqxr headers are unavailable
 #endif
+
+} // namespace
 
 namespace moq2ts {
 
@@ -93,6 +101,10 @@ bool MoqxrPublisher::connect(const PublishConfig& cfg) {
     m_streamName = cfg.streamName;
 
 #ifdef MOQ2TS_HAS_MOQXR
+    if (useMockTransport(cfg)) {
+        return connectMock(cfg);
+    }
+
     m_connected = true;
     emit connectionStateChanged(true, QString("moqxr publisher configured for %1; namespace=%2 stream=%3").arg(m_endpoint, m_namespace, m_streamName));
     return true;
@@ -125,6 +137,10 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
             emit publishError("Cannot publish: no active moqxr session.");
             return false;
         }
+    }
+
+    if (useMockTransport(cfg)) {
+        return publishLiveObjectsMock(catalog, std::move(nextObject), running, cfg.fragmentDurationMs);
     }
 
     try {

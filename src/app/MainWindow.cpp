@@ -29,7 +29,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
 
     auto* form = new QFormLayout();
 
-    endpointEdit = new QLineEdit("http://127.0.0.1:9000");
+    endpointEdit = new QLineEdit("mock://local");
     namespaceEdit = new QLineEdit("live");
     streamNameEdit = new QLineEdit("sample-stream");
 
