@@ -47,6 +47,7 @@ public slots:
     void onPublishStatus(const QString& message);
     void onPublishError(const QString& message);
     void onPublishStats(int64_t packets, int64_t bytes);
+    void onPublisherFramePublished(const QString& track, int64_t bytes, int64_t objects);
 
 private slots:
     void handleStart();
@@ -61,6 +62,7 @@ private:
     void loadPreferences();
     void savePreferences() const;
     void updatePreviewConfig();
+    void resetStats();
 
 private:
     QTabWidget* tabs = nullptr;
@@ -95,6 +97,12 @@ private:
     QPushButton* stopButton = nullptr;
     QLabel* statusLabel = nullptr;
     QTextBrowser* logBrowser = nullptr;
+    QLabel* pipelineObjectsValue = nullptr;
+    QLabel* pipelineBytesValue = nullptr;
+    QLabel* publisherTrackValue = nullptr;
+    QLabel* publisherObjectsValue = nullptr;
+    QLabel* publisherBytesValue = nullptr;
+    QLabel* publisherUpdatedValue = nullptr;
 };
 
 } // namespace moq2ts

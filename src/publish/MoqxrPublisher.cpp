@@ -165,9 +165,19 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
         }
 
         bool catalogSent = false;
-        source.next_object = [catalogSent, catalog, nextObject = std::move(nextObject)]() mutable -> std::optional<openmoq::publisher::LiveObject> {
+        int64_t publisherObjects = 0;
+        int64_t publisherBytes = 0;
+        source.next_object = [this,
+                              catalogSent,
+                              publisherObjects,
+                              publisherBytes,
+                              catalog,
+                              nextObject = std::move(nextObject)]() mutable -> std::optional<openmoq::publisher::LiveObject> {
             if (!catalogSent) {
                 catalogSent = true;
+                ++publisherObjects;
+                publisherBytes += catalog.size();
+                emit framePublished(QStringLiteral("catalog"), publisherBytes, publisherObjects);
                 return openmoq::publisher::LiveObject{
                     .track_name = "catalog",
                     .group_id = 0,
@@ -185,6 +195,9 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
             if (!next.has_value()) {
                 return std::nullopt;
             }
+            ++publisherObjects;
+            publisherBytes += next->payload.size();
+            emit framePublished(next->trackName, publisherBytes, publisherObjects);
             return openmoq::publisher::LiveObject{
                 .track_name = next->trackName.toStdString(),
                 .group_id = static_cast<std::size_t>(next->groupId),
@@ -198,24 +211,45 @@ bool MoqxrPublisher::publishLiveObjects(const PublishConfig& cfg,
             };
         };
 
-        openmoq::publisher::Publisher publisher(publisherConfig);
+        auto activePublisher = std::make_shared<openmoq::publisher::Publisher>(publisherConfig);
+        {
+            QMutexLocker locker(&m_mutex);
+            m_activePublisher = activePublisher;
+        }
+
         openmoq::publisher::transport::TlsConfig tls;
         tls.insecure_skip_verify = true;
-        const auto status = publisher.publish_live_objects(source, parseEndpoint(cfg.moqEndpoint), tls, false);
+        const auto status = activePublisher->publish_live_objects(source, parseEndpoint(cfg.moqEndpoint), tls, false);
         if (!status.ok && running.load(std::memory_order_acquire)) {
             emit publishError(QString::fromStdString(status.message));
+            QMutexLocker locker(&m_mutex);
+            if (m_activePublisher == activePublisher) {
+                m_activePublisher.reset();
+            }
             return false;
         }
-        const auto disconnectStatus = publisher.disconnect(0);
+        const auto disconnectStatus = activePublisher->disconnect(0);
         if (!disconnectStatus.ok) {
             emit publishError(QString::fromStdString(disconnectStatus.message));
+            QMutexLocker locker(&m_mutex);
+            if (m_activePublisher == activePublisher) {
+                m_activePublisher.reset();
+            }
             return false;
         }
 
-        const auto stats = publisher.stats();
+        const auto stats = activePublisher->stats();
+        {
+            QMutexLocker locker(&m_mutex);
+            if (m_activePublisher == activePublisher) {
+                m_activePublisher.reset();
+            }
+        }
         emit framePublished(mediaTrackName, static_cast<int64_t>(stats.bytes_published), static_cast<int64_t>(stats.objects_published));
         return status.ok;
     } catch (const std::exception& error) {
+        QMutexLocker locker(&m_mutex);
+        m_activePublisher.reset();
         emit publishError(QString::fromStdString(error.what()));
         return false;
     }
@@ -240,7 +274,9 @@ bool MoqxrPublisher::publishLiveObjectsMock(const QByteArray& catalog,
     }
 
     qDebug() << "MOCK MSFTS catalog bytes=" << catalog.size();
-    emit framePublished(QStringLiteral("catalog"), catalog.size(), 0);
+    int64_t publisherObjects = 1;
+    int64_t publisherBytes = catalog.size();
+    emit framePublished(QStringLiteral("catalog"), publisherBytes, publisherObjects);
 
     while (running.load(std::memory_order_acquire)) {
         std::optional<PublishedObject> object = nextObject();
@@ -249,7 +285,9 @@ bool MoqxrPublisher::publishLiveObjectsMock(const QByteArray& catalog,
         }
         qDebug() << "MOCK MSFTS publish" << object->trackName << "group=" << object->groupId
                  << "object=" << object->objectId << "bytes=" << object->payload.size();
-        emit framePublished(object->trackName, object->payload.size(), static_cast<int64_t>(object->objectId));
+        ++publisherObjects;
+        publisherBytes += object->payload.size();
+        emit framePublished(object->trackName, publisherBytes, publisherObjects);
         if (pacingMs > 0) {
             QThread::msleep(static_cast<unsigned long>(pacingMs));
         }
@@ -259,11 +297,27 @@ bool MoqxrPublisher::publishLiveObjectsMock(const QByteArray& catalog,
 
 
 void MoqxrPublisher::stop() {
-    QMutexLocker locker(&m_mutex);
-    if (!m_connected) {
-        return;
+#ifdef MOQ2TS_HAS_MOQXR
+    std::shared_ptr<openmoq::publisher::Publisher> publisherToStop;
+#endif
+    {
+        QMutexLocker locker(&m_mutex);
+        if (!m_connected) {
+            return;
+        }
+        m_connected = false;
+#ifdef MOQ2TS_HAS_MOQXR
+        publisherToStop = m_activePublisher;
+#endif
     }
-    m_connected = false;
+#ifdef MOQ2TS_HAS_MOQXR
+    if (publisherToStop) {
+        const auto disconnectStatus = publisherToStop->disconnect(0);
+        if (!disconnectStatus.ok) {
+            emit publishError(QString::fromStdString(disconnectStatus.message));
+        }
+    }
+#endif
     emit connectionStateChanged(false, "Publisher stopped");
 }
 

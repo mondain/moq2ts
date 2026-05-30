@@ -26,6 +26,27 @@
 
 namespace moq2ts {
 
+namespace {
+
+QString formatByteCount(int64_t bytes) {
+    constexpr double kib = 1024.0;
+    constexpr double mib = kib * 1024.0;
+    constexpr double gib = mib * 1024.0;
+    const double value = static_cast<double>(bytes);
+    if (value >= gib) {
+        return QStringLiteral("%1 GiB").arg(value / gib, 0, 'f', 2);
+    }
+    if (value >= mib) {
+        return QStringLiteral("%1 MiB").arg(value / mib, 0, 'f', 2);
+    }
+    if (value >= kib) {
+        return QStringLiteral("%1 KiB").arg(value / kib, 0, 'f', 2);
+    }
+    return QStringLiteral("%1 B").arg(bytes);
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     setWindowTitle("MOQ M2TS Live Publisher");
     setMinimumSize(720, 560);
@@ -36,6 +57,8 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     auto* configLayout = new QVBoxLayout(configTab);
     auto* logsTab = new QWidget();
     auto* logsLayout = new QVBoxLayout(logsTab);
+    auto* statsTab = new QWidget();
+    auto* statsLayout = new QFormLayout(statsTab);
     previewPanel = new PreviewPanel();
 
     auto* form = new QFormLayout();
@@ -159,12 +182,34 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     logBrowser->setOpenExternalLinks(false);
     logBrowser->setPlaceholderText("Logs and pipeline events appear here.");
 
+    pipelineObjectsValue = new QLabel(QStringLiteral("0"));
+    pipelineBytesValue = new QLabel(QStringLiteral("0 B"));
+    publisherTrackValue = new QLabel(QStringLiteral("-"));
+    publisherObjectsValue = new QLabel(QStringLiteral("0"));
+    publisherBytesValue = new QLabel(QStringLiteral("0 B"));
+    publisherUpdatedValue = new QLabel(QStringLiteral("-"));
+    for (QLabel* label : {pipelineObjectsValue,
+                          pipelineBytesValue,
+                          publisherTrackValue,
+                          publisherObjectsValue,
+                          publisherBytesValue,
+                          publisherUpdatedValue}) {
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    }
+    statsLayout->addRow(QStringLiteral("Pipeline objects"), pipelineObjectsValue);
+    statsLayout->addRow(QStringLiteral("Pipeline bytes"), pipelineBytesValue);
+    statsLayout->addRow(QStringLiteral("Publisher track"), publisherTrackValue);
+    statsLayout->addRow(QStringLiteral("Publisher objects"), publisherObjectsValue);
+    statsLayout->addRow(QStringLiteral("Publisher bytes"), publisherBytesValue);
+    statsLayout->addRow(QStringLiteral("Last publisher update"), publisherUpdatedValue);
+
     configLayout->addLayout(buttonRow);
     configLayout->addWidget(statusLabel);
     configLayout->addStretch(1);
     logsLayout->addWidget(logBrowser);
     tabs->addTab(configTab, QStringLiteral("Config"));
     tabs->addTab(previewPanel, QStringLiteral("Preview"));
+    tabs->addTab(statsTab, QStringLiteral("Stats"));
     tabs->addTab(logsTab, QStringLiteral("Logs"));
     root->addWidget(tabs);
 
@@ -386,6 +431,7 @@ void MainWindow::handleStart() {
     }
 
     setUiEnabled(false);
+    resetStats();
     statusLabel->setText("Connecting...");
     logBrowser->append(QString("%1 | Publishing started for stream %2/%3").arg(QDateTime::currentDateTime().toString(Qt::ISODate), cfg.namespaceName, cfg.streamName));
 
@@ -402,6 +448,15 @@ void MainWindow::updatePreviewConfig() {
     if (previewPanel) {
         previewPanel->setConfig(currentConfig());
     }
+}
+
+void MainWindow::resetStats() {
+    pipelineObjectsValue->setText(QStringLiteral("0"));
+    pipelineBytesValue->setText(QStringLiteral("0 B"));
+    publisherTrackValue->setText(QStringLiteral("-"));
+    publisherObjectsValue->setText(QStringLiteral("0"));
+    publisherBytesValue->setText(QStringLiteral("0 B"));
+    publisherUpdatedValue->setText(QStringLiteral("-"));
 }
 
 void MainWindow::onPublishStatus(const QString& message) {
@@ -421,6 +476,15 @@ void MainWindow::onPublishError(const QString& message) {
 
 void MainWindow::onPublishStats(int64_t packets, int64_t bytes) {
     statusLabel->setText(QString("Packets sent: %1, bytes sent: %2").arg(packets).arg(bytes));
+    pipelineObjectsValue->setText(QString::number(packets));
+    pipelineBytesValue->setText(formatByteCount(bytes));
+}
+
+void MainWindow::onPublisherFramePublished(const QString& track, int64_t bytes, int64_t objects) {
+    publisherTrackValue->setText(track);
+    publisherObjectsValue->setText(QString::number(objects));
+    publisherBytesValue->setText(formatByteCount(bytes));
+    publisherUpdatedValue->setText(QDateTime::currentDateTime().toString(Qt::ISODate));
 }
 
 } // namespace moq2ts

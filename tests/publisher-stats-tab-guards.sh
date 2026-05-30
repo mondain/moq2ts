@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+main_cpp="$repo_root/src/main.cpp"
+window_cpp="$repo_root/src/app/MainWindow.cpp"
+window_h="$repo_root/src/app/MainWindow.h"
+publisher_cpp="$repo_root/src/publish/MoqxrPublisher.cpp"
+
+python3 - "$main_cpp" "$window_cpp" "$window_h" "$publisher_cpp" <<'PY'
+from pathlib import Path
+import sys
+
+main_cpp = Path(sys.argv[1]).read_text()
+window_cpp = Path(sys.argv[2]).read_text()
+window_h = Path(sys.argv[3]).read_text()
+publisher_cpp = Path(sys.argv[4]).read_text()
+
+required_window = [
+    'tabs->addTab(statsTab, QStringLiteral("Stats"))',
+    'publisherObjectsValue',
+    'publisherBytesValue',
+    'publisherTrackValue',
+    'pipelineObjectsValue',
+    'pipelineBytesValue',
+    'resetStats()',
+    'void MainWindow::onPublisherFramePublished',
+    'formatByteCount',
+]
+for needle in required_window:
+    if needle not in window_cpp and needle not in window_h:
+        raise SystemExit(f"missing stats tab UI pattern: {needle}")
+
+if "onPublisherFramePublished(const QString& track, int64_t bytes, int64_t objects)" not in window_h:
+    raise SystemExit("main window must expose a slot for publisher frame stats")
+
+if "QObject::connect(&publisher, &moq2ts::MoqxrPublisher::framePublished" not in main_cpp:
+    raise SystemExit("publisher framePublished signal must be connected to the stats tab")
+
+if "emit framePublished(QStringLiteral(\"catalog\")" not in publisher_cpp:
+    raise SystemExit("real publisher must emit catalog stats")
+
+if "emit framePublished(next->trackName" not in publisher_cpp:
+    raise SystemExit("real publisher must emit per-object publisher stats")
+PY

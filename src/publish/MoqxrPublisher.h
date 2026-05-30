@@ -8,9 +8,16 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "../app/PublishConfig.h"
+
+#ifdef MOQ2TS_HAS_MOQXR
+namespace openmoq::publisher {
+class Publisher;
+}
+#endif
 
 namespace moq2ts {
 
@@ -56,7 +63,7 @@ public:
 
 signals:
     void connectionStateChanged(bool connected, const QString& message);
-    void framePublished(const QString& track, int64_t bytes, int64_t segmentMs);
+    void framePublished(const QString& track, int64_t bytes, int64_t objects);
     void publishError(const QString& error);
 
 private:
@@ -71,6 +78,9 @@ private:
     QString m_streamName;
     QString m_endpoint;
     mutable QMutex m_mutex;
+#ifdef MOQ2TS_HAS_MOQXR
+    std::shared_ptr<openmoq::publisher::Publisher> m_activePublisher;
+#endif
 };
 
 } // namespace moq2ts

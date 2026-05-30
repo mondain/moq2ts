@@ -20,6 +20,8 @@ public:
 
     void start(const PublishConfig& cfg, MoqxrPublisher* publisher);
     void stop();
+    void requestStop();
+    void waitForStopped();
     bool running() const;
 
 signals:
