@@ -5,6 +5,8 @@
 #include <memory>
 #include <vector>
 
+#include <QFile>
+#include <QFileInfo>
 #include <QtGlobal>
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
@@ -93,6 +95,25 @@ QString audioInputName(const QString& deviceId) {
     return QStringLiteral(":%1").arg(deviceId);
 #else
     return deviceId;
+#endif
+}
+
+bool isPrimaryV4l2Device(const QString& deviceName) {
+#if defined(Q_OS_LINUX)
+    if (!deviceName.startsWith(QStringLiteral("/dev/video"))) {
+        return true;
+    }
+
+    const QString nodeName = QFileInfo(deviceName).fileName();
+    QFile indexFile(QStringLiteral("/sys/class/video4linux/%1/index").arg(nodeName));
+    if (!indexFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return true;
+    }
+
+    return QString::fromUtf8(indexFile.readAll()).trimmed() == QStringLiteral("0");
+#else
+    Q_UNUSED(deviceName);
+    return true;
 #endif
 }
 
@@ -259,13 +280,8 @@ struct LibavCaptureSource::Impl {
         }
         headerWritten = true;
 
+        extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidValue);
         pumpUntilInitData();
-        if (initDataBytes.isEmpty()) {
-            if (error) {
-                *error = QStringLiteral("MPEG-TS capture muxer did not emit PAT/PMT initData.");
-            }
-            return false;
-        }
         return true;
     }
 
@@ -650,6 +666,9 @@ QList<CaptureDevice> LibavCaptureSource::enumerateVideoInputs() {
     for (int i = 0; i < list->nb_devices; ++i) {
         AVDeviceInfo* info = list->devices[i];
         if (!info) continue;
+        if (!info->device_name || !*info->device_name) continue;
+        const QString deviceName = QString::fromUtf8(info->device_name);
+        if (!isPrimaryV4l2Device(deviceName)) continue;
         bool isVideo = false;
         for (int k = 0; k < info->nb_media_types; ++k) {
             if (info->media_types[k] == AVMEDIA_TYPE_VIDEO) { isVideo = true; break; }
@@ -659,7 +678,7 @@ QList<CaptureDevice> LibavCaptureSource::enumerateVideoInputs() {
         }
         if (!isVideo) continue;
         CaptureDevice d;
-        d.id = QString::number(i);
+        d.id = deviceName;
         d.description = QString::fromUtf8(info->device_description ? info->device_description : info->device_name);
         devices.append(d);
     }
@@ -686,6 +705,7 @@ QList<CaptureDevice> LibavCaptureSource::enumerateAudioInputs() {
     for (int i = 0; i < list->nb_devices; ++i) {
         AVDeviceInfo* info = list->devices[i];
         if (!info) continue;
+        if (!info->device_name || !*info->device_name) continue;
         bool isAudio = false;
         for (int k = 0; k < info->nb_media_types; ++k) {
             if (info->media_types[k] == AVMEDIA_TYPE_AUDIO) { isAudio = true; break; }
@@ -695,7 +715,7 @@ QList<CaptureDevice> LibavCaptureSource::enumerateAudioInputs() {
         }
         if (!isAudio) continue;
         CaptureDevice d;
-        d.id = QString::number(i);
+        d.id = QString::fromUtf8(info->device_name ? info->device_name : "");
         d.description = QString::fromUtf8(info->device_description ? info->device_description : info->device_name);
         devices.append(d);
     }

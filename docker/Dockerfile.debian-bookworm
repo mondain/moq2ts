@@ -8,6 +8,7 @@ RUN apt-get update && \
     git \
     make \
     ninja-build \
+    patchelf \
     pkg-config \
     libavcodec-dev \
     libavdevice-dev \
@@ -21,7 +22,7 @@ RUN apt-get update && \
 
 RUN if ! dpkg -s qt6-base-dev >/dev/null 2>&1; then \
       DEBIAN_FRONTEND=noninteractive apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qtbase5-dev qtmultimedia5-dev && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qtbase5-dev && \
       apt-get clean && rm -rf /var/lib/apt/lists/*; \
     fi
 

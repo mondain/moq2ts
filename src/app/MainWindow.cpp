@@ -209,7 +209,7 @@ void MainWindow::refreshCaptureDevices() {
     cameraSourceCombo->addItem("No camera selected", QString());
     microphoneSourceCombo->addItem("No microphone selected", QString());
 
-#if defined(Q_OS_DARWIN)
+#if defined(Q_OS_DARWIN) || defined(MOQ2TS_HAVE_LIBAV_CAPTURE)
     for (const CaptureDevice& device : LibavCaptureSource::enumerateVideoInputs()) {
         cameraSourceCombo->addItem(device.description, device.id);
     }

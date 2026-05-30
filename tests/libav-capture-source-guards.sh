@@ -17,3 +17,38 @@ if (( av_error_line < guard_line )); then
   printf 'avError should live inside the libav capture implementation guard\n' >&2
   exit 1
 fi
+
+if grep -q 'd.id = QString::number(i);' "$SOURCE"; then
+  printf 'libav capture enumeration should keep AVDeviceInfo device_name as the openable device id\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'info->device_name ? info->device_name' "$SOURCE"; then
+  printf 'libav capture enumeration does not preserve AVDeviceInfo device_name\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'if (!info->device_name || !\*info->device_name) continue;' "$SOURCE"; then
+  printf 'libav capture enumeration should skip devices without an openable device_name\n' >&2
+  exit 1
+fi
+
+if ! grep -q '/sys/class/video4linux' "$SOURCE"; then
+  printf 'libav capture enumeration should filter duplicate V4L2 companion devices by sysfs index\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'isPrimaryV4l2Device' "$SOURCE"; then
+  printf 'libav capture enumeration should use a V4L2 primary-device helper\n' >&2
+  exit 1
+fi
+
+if grep -q 'MPEG-TS capture muxer did not emit PAT/PMT initData' "$SOURCE"; then
+  printf 'live libav capture should not fail startup when PAT/PMT initData is delayed\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidValue);' "$SOURCE"; then
+  printf 'live libav capture should attempt initData extraction without requiring it\n' >&2
+  exit 1
+fi
