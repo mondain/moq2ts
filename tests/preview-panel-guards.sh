@@ -61,6 +61,16 @@ if ! grep -q 'audioLevelsChanged' "$PREVIEW_PANEL_CPP"; then
   exit 1
 fi
 
+if ! grep -q 'std::log10' "$PREVIEW_PANEL_CPP"; then
+  printf 'preview audio meters should use dBFS scaling so normal speech is visible\n' >&2
+  exit 1
+fi
+
+if grep -q 'level \\* 100.0' "$PREVIEW_PANEL_CPP"; then
+  printf 'preview audio meters should not display raw linear RMS values\n' >&2
+  exit 1
+fi
+
 if ! grep -q 'Qt::DirectConnection' "$PREVIEW_PANEL_CPP"; then
   printf 'preview stop should reach the capture worker even while its capture loop is active\n' >&2
   exit 1

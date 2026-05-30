@@ -10,6 +10,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 #include "../media/LibavPreviewWorker.h"
 
@@ -159,7 +160,14 @@ void PreviewPanel::handlePreviewFinished() {
 }
 
 void PreviewPanel::updateMeter(QProgressBar* meter, double level) {
-    const int value = std::clamp(static_cast<int>(level * 100.0), 0, 100);
+    if (level <= 0.0) {
+        meter->setValue(0);
+        return;
+    }
+    constexpr double minDb = -60.0;
+    const double db = 20.0 * std::log10(std::clamp(level, 0.000001, 1.0));
+    const double normalized = (std::clamp(db, minDb, 0.0) - minDb) / -minDb;
+    const int value = std::clamp(static_cast<int>(normalized * 100.0), 0, 100);
     meter->setValue(value);
 }
 
