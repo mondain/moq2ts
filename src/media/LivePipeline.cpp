@@ -212,7 +212,7 @@ void LivePipeline::runLoop() {
         }
 
         const int packetsPerObject = std::max(1, m_config.targetSegmentBytes / capture.packetSize());
-        const QString trackName = m_config.streamName.isEmpty() ? QStringLiteral("m2ts") : m_config.streamName;
+        const QString trackName = QStringLiteral("m2ts");
         const QString timelineTrackName = trackName + QStringLiteral(".timeline");
         const QByteArray catalog = MsftsMuxer::catalogJson({
             .track = trackName,
@@ -300,7 +300,7 @@ void LivePipeline::runLoop() {
     }
 
     const int packetsPerObject = std::max(1, m_config.targetSegmentBytes / packetizer.packetSize());
-    const QString trackName = m_config.streamName.isEmpty() ? QStringLiteral("m2ts") : m_config.streamName;
+    const QString trackName = QStringLiteral("m2ts");
     const QString timelineTrackName = trackName + QStringLiteral(".timeline");
     const QByteArray catalog = MsftsMuxer::catalogJson({
         .track = trackName,
