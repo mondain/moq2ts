@@ -14,6 +14,7 @@ RUN apt-get update && \
     libavdevice-dev \
     libavformat-dev \
     libavutil-dev \
+    libssl-dev \
     libswresample-dev \
     libswscale-dev \
     libopus-dev \

@@ -36,7 +36,22 @@ if grep -q 'chown -R' "$BUILD_SCRIPT"; then
   exit 1
 fi
 
-for package in libavdevice-dev libswscale-dev patchelf; do
+if ! grep -q 'MOQ2TS_BUILD_WITH_MOCK_MOQXR="${MOQ2TS_BUILD_WITH_MOCK_MOQXR:-ON}"' "$BUILD_SCRIPT"; then
+  printf 'Bookworm build script does not allow selecting the real moqxr publisher build\n' >&2
+  exit 1
+fi
+
+if grep -q -- '-DMOQ2TS_BUILD_WITH_MOCK_MOQXR=ON' "$BUILD_SCRIPT"; then
+  printf 'Bookworm build script still hard-codes the mock publisher\n' >&2
+  exit 1
+fi
+
+if ! grep -q '/workspace/moqxr:ro' "$BUILD_SCRIPT"; then
+  printf 'Bookworm build script does not mount the sibling moqxr checkout for real publisher builds\n' >&2
+  exit 1
+fi
+
+for package in libavdevice-dev libswscale-dev libssl-dev patchelf; do
   if ! grep -q "$package" "$DOCKERFILE"; then
     printf 'Bookworm Docker image is missing %s\n' "$package" >&2
     exit 1

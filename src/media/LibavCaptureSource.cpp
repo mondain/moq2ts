@@ -14,6 +14,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavdevice/avdevice.h>
 #include <libavformat/avformat.h>
+#include <libavutil/audio_fifo.h>
 #include <libavutil/avutil.h>
 #include <libavutil/error.h>
 #include <libavutil/imgutils.h>
@@ -190,8 +191,10 @@ struct LibavCaptureSource::Impl {
         AVCodecContext* encoder = nullptr;
         AVStream* inputStream = nullptr;
         AVStream* outputStream = nullptr;
+        AVAudioFifo* audioFifo = nullptr;
         SwsContext* sws = nullptr;
         SwrContext* swr = nullptr;
+        int64_t nextAudioPts = 0;
         int inputStreamIndex = -1;
         bool audio = false;
         bool video = false;
@@ -221,6 +224,9 @@ struct LibavCaptureSource::Impl {
             }
             if (stream->swr) {
                 swr_free(&stream->swr);
+            }
+            if (stream->audioFifo) {
+                av_audio_fifo_free(stream->audioFifo);
             }
             if (stream->decoder) {
                 avcodec_free_context(&stream->decoder);
@@ -522,83 +528,11 @@ struct LibavCaptureSource::Impl {
         return true;
     }
 
-    bool encodeFrame(StreamState* stream, AVFrame* inputFrame, QString* error) {
-        FramePtr frame = makeFrame();
-        if (stream->video) {
-            frame->format = stream->encoder->pix_fmt;
-            frame->width = stream->encoder->width;
-            frame->height = stream->encoder->height;
-            int rc = av_frame_get_buffer(frame.get(), 32);
-            if (rc < 0) {
-                if (error) {
-                    *error = QStringLiteral("Failed allocating video frame: %1").arg(avError(rc));
-                }
-                return false;
-            }
-            stream->sws = sws_getCachedContext(stream->sws,
-                                               inputFrame->width,
-                                               inputFrame->height,
-                                               static_cast<AVPixelFormat>(inputFrame->format),
-                                               frame->width,
-                                               frame->height,
-                                               static_cast<AVPixelFormat>(frame->format),
-                                               SWS_BILINEAR,
-                                               nullptr,
-                                               nullptr,
-                                               nullptr);
-            if (!stream->sws) {
-                if (error) {
-                    *error = QStringLiteral("Failed creating video scaler.");
-                }
-                return false;
-            }
-            sws_scale(stream->sws, inputFrame->data, inputFrame->linesize, 0, inputFrame->height, frame->data, frame->linesize);
-            frame->pts = inputFrame->best_effort_timestamp;
-            if (frame->pts == AV_NOPTS_VALUE) {
-                frame->pts = nextObjectId;
-            }
-        } else {
-            frame->format = stream->encoder->sample_fmt;
-            frame->sample_rate = stream->encoder->sample_rate;
-            av_channel_layout_copy(&frame->ch_layout, &stream->encoder->ch_layout);
-            frame->nb_samples = inputFrame->nb_samples;
-            int rc = av_frame_get_buffer(frame.get(), 0);
-            if (rc < 0) {
-                if (error) {
-                    *error = QStringLiteral("Failed allocating audio frame: %1").arg(avError(rc));
-                }
-                return false;
-            }
-            AVChannelLayout inputLayout;
-            if (inputFrame->ch_layout.nb_channels > 0) {
-                av_channel_layout_copy(&inputLayout, &inputFrame->ch_layout);
-            } else {
-                av_channel_layout_default(&inputLayout, inputFrame->ch_layout.nb_channels > 0 ? inputFrame->ch_layout.nb_channels : 2);
-            }
-            rc = swr_alloc_set_opts2(&stream->swr,
-                                     &stream->encoder->ch_layout,
-                                     stream->encoder->sample_fmt,
-                                     stream->encoder->sample_rate,
-                                     &inputLayout,
-                                     static_cast<AVSampleFormat>(inputFrame->format),
-                                     inputFrame->sample_rate,
-                                     0,
-                                     nullptr);
-            av_channel_layout_uninit(&inputLayout);
-            if (rc < 0 || !stream->swr || swr_init(stream->swr) < 0) {
-                if (error) {
-                    *error = QStringLiteral("Failed creating audio resampler.");
-                }
-                return false;
-            }
-            swr_convert(stream->swr, frame->data, frame->nb_samples, const_cast<const uint8_t**>(inputFrame->extended_data), inputFrame->nb_samples);
-            frame->pts = av_rescale_q(inputFrame->best_effort_timestamp, stream->inputStream->time_base, stream->encoder->time_base);
-        }
-
-        int rc = avcodec_send_frame(stream->encoder, frame.get());
+    bool sendEncoderFrame(StreamState* stream, AVFrame* frame, const char* streamKind, QString* error) {
+        int rc = avcodec_send_frame(stream->encoder, frame);
         if (rc < 0) {
             if (error) {
-                *error = QStringLiteral("Failed sending frame to encoder: %1").arg(avError(rc));
+                *error = QStringLiteral("Failed sending %1 frame to encoder: %2").arg(QString::fromLatin1(streamKind), avError(rc));
             }
             return false;
         }
@@ -610,7 +544,7 @@ struct LibavCaptureSource::Impl {
             }
             if (rc < 0) {
                 if (error) {
-                    *error = QStringLiteral("Failed receiving encoded packet: %1").arg(avError(rc));
+                    *error = QStringLiteral("Failed receiving %1 encoded packet: %2").arg(QString::fromLatin1(streamKind), avError(rc));
                 }
                 return false;
             }
@@ -625,6 +559,167 @@ struct LibavCaptureSource::Impl {
             }
         }
         return true;
+    }
+
+    bool encodeAudioFrame(StreamState* stream, AVFrame* inputFrame, QString* error) {
+        AVChannelLayout inputLayout = {};
+        if (inputFrame->ch_layout.nb_channels > 0) {
+            av_channel_layout_copy(&inputLayout, &inputFrame->ch_layout);
+        } else {
+            av_channel_layout_default(&inputLayout, inputFrame->ch_layout.nb_channels > 0 ? inputFrame->ch_layout.nb_channels : 2);
+        }
+
+        int rc = swr_alloc_set_opts2(&stream->swr,
+                                     &stream->encoder->ch_layout,
+                                     stream->encoder->sample_fmt,
+                                     stream->encoder->sample_rate,
+                                     &inputLayout,
+                                     static_cast<AVSampleFormat>(inputFrame->format),
+                                     inputFrame->sample_rate,
+                                     0,
+                                     nullptr);
+        av_channel_layout_uninit(&inputLayout);
+        if (rc < 0 || !stream->swr || swr_init(stream->swr) < 0) {
+            if (error) {
+                *error = QStringLiteral("Failed creating audio resampler.");
+            }
+            return false;
+        }
+
+        const int maxSamples = static_cast<int>(av_rescale_rnd(swr_get_delay(stream->swr, inputFrame->sample_rate) + inputFrame->nb_samples,
+                                                               stream->encoder->sample_rate,
+                                                               inputFrame->sample_rate,
+                                                               AV_ROUND_UP));
+        FramePtr resampled = makeFrame();
+        resampled->format = stream->encoder->sample_fmt;
+        resampled->sample_rate = stream->encoder->sample_rate;
+        av_channel_layout_copy(&resampled->ch_layout, &stream->encoder->ch_layout);
+        resampled->nb_samples = maxSamples;
+        rc = av_frame_get_buffer(resampled.get(), 0);
+        if (rc < 0) {
+            if (error) {
+                *error = QStringLiteral("Failed allocating audio frame: %1").arg(avError(rc));
+            }
+            return false;
+        }
+
+        const int convertedSamples = swr_convert(stream->swr,
+                                                 resampled->extended_data,
+                                                 maxSamples,
+                                                 const_cast<const uint8_t**>(inputFrame->extended_data),
+                                                 inputFrame->nb_samples);
+        if (convertedSamples < 0) {
+            if (error) {
+                *error = QStringLiteral("Failed resampling audio frame: %1").arg(avError(convertedSamples));
+            }
+            return false;
+        }
+        if (convertedSamples == 0) {
+            return true;
+        }
+
+        if (!stream->audioFifo) {
+            stream->audioFifo = av_audio_fifo_alloc(stream->encoder->sample_fmt,
+                                                    stream->encoder->ch_layout.nb_channels,
+                                                    std::max(convertedSamples, stream->encoder->frame_size));
+            if (!stream->audioFifo) {
+                if (error) {
+                    *error = QStringLiteral("Failed allocating audio FIFO.");
+                }
+                return false;
+            }
+        }
+
+        rc = av_audio_fifo_realloc(stream->audioFifo, av_audio_fifo_size(stream->audioFifo) + convertedSamples);
+        if (rc < 0) {
+            if (error) {
+                *error = QStringLiteral("Failed growing audio FIFO: %1").arg(avError(rc));
+            }
+            return false;
+        }
+        rc = av_audio_fifo_write(stream->audioFifo, reinterpret_cast<void**>(resampled->extended_data), convertedSamples);
+        if (rc < convertedSamples) {
+            if (error) {
+                *error = QStringLiteral("Failed buffering audio samples.");
+            }
+            return false;
+        }
+
+        while (av_audio_fifo_size(stream->audioFifo) > 0) {
+            const int targetSamples = stream->encoder->frame_size > 0
+                ? stream->encoder->frame_size
+                : av_audio_fifo_size(stream->audioFifo);
+            if (av_audio_fifo_size(stream->audioFifo) < targetSamples) {
+                break;
+            }
+
+            FramePtr frame = makeFrame();
+            frame->format = stream->encoder->sample_fmt;
+            frame->sample_rate = stream->encoder->sample_rate;
+            av_channel_layout_copy(&frame->ch_layout, &stream->encoder->ch_layout);
+            frame->nb_samples = targetSamples;
+            rc = av_frame_get_buffer(frame.get(), 0);
+            if (rc < 0) {
+                if (error) {
+                    *error = QStringLiteral("Failed allocating audio frame: %1").arg(avError(rc));
+                }
+                return false;
+            }
+            rc = av_audio_fifo_read(stream->audioFifo, reinterpret_cast<void**>(frame->extended_data), targetSamples);
+            if (rc < targetSamples) {
+                if (error) {
+                    *error = QStringLiteral("Failed reading buffered audio samples.");
+                }
+                return false;
+            }
+            frame->pts = stream->nextAudioPts;
+            stream->nextAudioPts += frame->nb_samples;
+            if (!sendEncoderFrame(stream, frame.get(), "audio", error)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool encodeFrame(StreamState* stream, AVFrame* inputFrame, QString* error) {
+        if (stream->audio) {
+            return encodeAudioFrame(stream, inputFrame, error);
+        }
+
+        FramePtr frame = makeFrame();
+        frame->format = stream->encoder->pix_fmt;
+        frame->width = stream->encoder->width;
+        frame->height = stream->encoder->height;
+        int rc = av_frame_get_buffer(frame.get(), 32);
+        if (rc < 0) {
+            if (error) {
+                *error = QStringLiteral("Failed allocating video frame: %1").arg(avError(rc));
+            }
+            return false;
+        }
+        stream->sws = sws_getCachedContext(stream->sws,
+                                           inputFrame->width,
+                                           inputFrame->height,
+                                           static_cast<AVPixelFormat>(inputFrame->format),
+                                           frame->width,
+                                           frame->height,
+                                           static_cast<AVPixelFormat>(frame->format),
+                                           SWS_BILINEAR,
+                                           nullptr,
+                                           nullptr,
+                                           nullptr);
+        if (!stream->sws) {
+            if (error) {
+                *error = QStringLiteral("Failed creating video scaler.");
+            }
+            return false;
+        }
+        sws_scale(stream->sws, inputFrame->data, inputFrame->linesize, 0, inputFrame->height, frame->data, frame->linesize);
+        frame->pts = inputFrame->best_effort_timestamp;
+        if (frame->pts == AV_NOPTS_VALUE) {
+            frame->pts = nextObjectId;
+        }
+        return sendEncoderFrame(stream, frame.get(), "video", error);
     }
 #else
     bool open(QString* error) {

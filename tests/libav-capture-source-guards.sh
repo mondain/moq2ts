@@ -52,3 +52,18 @@ if ! grep -q 'extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidV
   printf 'live libav capture should attempt initData extraction without requiring it\n' >&2
   exit 1
 fi
+
+if ! grep -q 'AVAudioFifo' "$SOURCE"; then
+  printf 'live libav capture should buffer audio into encoder-sized frames\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'encoder->frame_size' "$SOURCE"; then
+  printf 'live libav capture should honor encoder frame_size for audio frames\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'sendEncoderFrame(stream, frame.get(), "audio", error)' "$SOURCE"; then
+  printf 'live libav capture errors should identify audio frame encoder failures\n' >&2
+  exit 1
+fi
