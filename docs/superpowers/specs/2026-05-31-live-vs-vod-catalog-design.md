@@ -34,12 +34,13 @@ Verified against the drafts:
 | `m2tsRandomAccess` (track) | omit (today) | `true` | MSFTS 6.8 / 7.3 example |
 
 `MsftsMuxer::catalogJson` already gates `generatedAt` and `targetLatency` on
-`isLive`. This work adds `trackDuration` (gated to VOD) and finishes wiring
-`m2tsRandomAccess` (the field already exists on `MsftsCatalog`).
+`isLive`. This work adds the `trackDuration` field (gated to VOD) and the
+`m2tsRandomAccess` field. Note: `MsftsCatalog` does NOT yet carry a `randomAccess`
+member in committed code (that was specified only in the parked keyframe-aligned
+groups plan); this work introduces it.
 
-For live, `m2tsRandomAccess` stays driven by `LibavCaptureSource::randomAccessActive()`
-(false until keyframe grouping lands, per the parked plan). For VOD it is set
-`true`.
+For live, `m2tsRandomAccess` is omitted for now (capture grouping is not yet
+keyframe-aligned, so it would be false regardless). For VOD it is set `true`.
 
 ## trackDuration source
 
@@ -62,11 +63,10 @@ covered by extending the keyframe-aligned-groups work to the file path (parked).
 
 ## Files
 
-- `MsftsMuxer.h` - add `qint64 trackDurationMs = 0;` (`randomAccess` already
-  present); `isLive` already present.
+- `MsftsMuxer.h` - add `qint64 trackDurationMs = 0;` and `bool randomAccess =
+  false;` (`isLive` already present).
 - `MsftsMuxer.cpp` - emit `trackDuration` when `!isLive && trackDurationMs > 0`;
-  emit `m2tsRandomAccess` when `randomAccess` is true (gating already designed in
-  the parked plan; add here if not yet present).
+  emit `m2tsRandomAccess: true` when `randomAccess` is true.
 - `M2tsPacketizer.h` / `.cpp` - add `static qint64 probeDurationMs(const QString&
   sourcePath)` (or a file-local helper) using libav, guarded by the existing
   libav build macro; return 0 on failure or when libav is unavailable.
