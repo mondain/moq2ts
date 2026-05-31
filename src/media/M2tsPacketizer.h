@@ -29,6 +29,10 @@ public:
     QByteArray initData() const;
     std::uint64_t objectsRead() const;
 
+    // Probes the file with libav and returns its duration in integer
+    // milliseconds, or 0 if unknown / libav unavailable / on any failure.
+    static qint64 probeDurationMs(const QString& sourcePath);
+
 private:
     bool detectPacketSize(QString* error);
     bool collectInitData(QString* error);

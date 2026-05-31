@@ -2,6 +2,13 @@
 
 #include <algorithm>
 
+#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+}
+#endif
+
 namespace moq2ts {
 
 namespace {
@@ -331,6 +338,29 @@ QByteArray M2tsPacketizer::initData() const {
 
 std::uint64_t M2tsPacketizer::objectsRead() const {
     return m_nextObjectId;
+}
+
+qint64 M2tsPacketizer::probeDurationMs(const QString& sourcePath) {
+#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+    if (sourcePath.isEmpty()) {
+        return 0;
+    }
+    AVFormatContext* ctx = nullptr;
+    const QByteArray path = sourcePath.toUtf8();
+    if (avformat_open_input(&ctx, path.constData(), nullptr, nullptr) != 0) {
+        return 0;
+    }
+    qint64 durationMs = 0;
+    if (avformat_find_stream_info(ctx, nullptr) >= 0 && ctx->duration > 0) {
+        // AVFormatContext::duration is in AV_TIME_BASE units (microseconds).
+        durationMs = static_cast<qint64>((ctx->duration + (AV_TIME_BASE / 2000)) / (AV_TIME_BASE / 1000));
+    }
+    avformat_close_input(&ctx);
+    return durationMs;
+#else
+    Q_UNUSED(sourcePath);
+    return 0;
+#endif
 }
 
 } // namespace moq2ts
