@@ -14,6 +14,9 @@ struct M2tsObject {
     QByteArray payload;
     std::uint64_t groupId = 0;
     std::uint64_t objectId = 0;
+    // True when this object is the first of a new MOQT group (begins at a
+    // random-access point). Always false for the file-source path.
+    bool startsGroup = false;
 };
 
 class M2tsPacketizer final {
