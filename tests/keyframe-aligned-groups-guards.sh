@@ -13,8 +13,14 @@ fail() { printf '%s\n' "$1" >&2; exit 1; }
 grep -q 'bool startsGroup' "$M2TS_HDR" \
   || fail "M2tsObject must carry a startsGroup flag"
 
-grep -q 'AV_PKT_FLAG_KEY' "$CAPTURE" \
-  || fail "capture must detect keyframes via AV_PKT_FLAG_KEY to mark group boundaries"
+grep -q 'scanForRapBoundaries' "$CAPTURE" \
+  || fail "capture must scan muxed TS for random-access points"
+
+grep -q 'random_access_indicator' "$CAPTURE" \
+  || fail "RAP scan must test the TS random_access_indicator"
+
+grep -q 'videoPidValue' "$CAPTURE" \
+  || fail "capture must track the muxer-assigned video PID for RAP scanning"
 
 grep -q 'groupBoundaries' "$CAPTURE" \
   || fail "capture must track keyframe group boundaries"
