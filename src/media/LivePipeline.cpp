@@ -274,7 +274,7 @@ void LivePipeline::runLoop() {
                 pendingTimeline = std::move(timeline);
             }
             ++objects;
-            bytes += object.payload.size();
+            bytes += published.payload.size();
             emit stats(objects, bytes);
             return published;
         };
@@ -362,7 +362,7 @@ void LivePipeline::runLoop() {
             pendingTimeline = std::move(timeline);
         }
         ++objects;
-        bytes += object.payload.size();
+        bytes += published.payload.size();
         emit stats(objects, bytes);
         return published;
     };
