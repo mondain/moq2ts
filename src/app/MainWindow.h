@@ -70,7 +70,6 @@ private:
 
     QLineEdit* endpointEdit = nullptr;
     QLineEdit* namespaceEdit = nullptr;
-    QLineEdit* streamNameEdit = nullptr;
     QLineEdit* videoSourceEdit = nullptr;
     QLineEdit* audioSourceEdit = nullptr;
     QComboBox* cameraSourceCombo = nullptr;

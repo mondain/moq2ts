@@ -75,7 +75,6 @@ private:
 
     bool m_connected = false;
     QString m_namespace;
-    QString m_streamName;
     QString m_endpoint;
     mutable QMutex m_mutex;
 #ifdef MOQ2TS_HAS_MOQXR

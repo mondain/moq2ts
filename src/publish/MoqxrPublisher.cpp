@@ -98,7 +98,6 @@ bool MoqxrPublisher::connect(const PublishConfig& cfg) {
     QMutexLocker locker(&m_mutex);
     m_endpoint = cfg.moqEndpoint;
     m_namespace = cfg.namespaceName;
-    m_streamName = cfg.streamName;
 
 #ifdef MOQ2TS_HAS_MOQXR
     if (useMockTransport(cfg)) {
@@ -106,7 +105,7 @@ bool MoqxrPublisher::connect(const PublishConfig& cfg) {
     }
 
     m_connected = true;
-    emit connectionStateChanged(true, QString("moqxr publisher configured for %1; namespace=%2 stream=%3").arg(m_endpoint, m_namespace, m_streamName));
+    emit connectionStateChanged(true, QString("moqxr publisher configured for %1; namespace=%2").arg(m_endpoint, m_namespace));
     return true;
 #else
     if (!useMockTransport(cfg)) {
@@ -118,13 +117,13 @@ bool MoqxrPublisher::connect(const PublishConfig& cfg) {
 }
 
 bool MoqxrPublisher::connectMock(const PublishConfig& cfg) {
-    if (cfg.moqEndpoint.isEmpty() || cfg.namespaceName.isEmpty() || cfg.streamName.isEmpty()) {
-        emit publishError("Invalid MOQ endpoint/namespace/stream configuration.");
+    if (cfg.moqEndpoint.isEmpty() || cfg.namespaceName.isEmpty()) {
+        emit publishError("Invalid MOQ endpoint/namespace configuration.");
         return false;
     }
 
     m_connected = true;
-    emit connectionStateChanged(true, QString("Mock publisher connected to %1; namespace=%2 stream=%3").arg(m_endpoint, m_namespace, m_streamName));
+    emit connectionStateChanged(true, QString("Mock publisher connected to %1; namespace=%2").arg(m_endpoint, m_namespace));
     return true;
 }
 

@@ -64,8 +64,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     auto* form = new QFormLayout();
 
     endpointEdit = new QLineEdit("mock://local");
-    namespaceEdit = new QLineEdit("live");
-    streamNameEdit = new QLineEdit("sample-stream");
+    namespaceEdit = new QLineEdit("live/paul1");
 
     videoSourceEdit = new QLineEdit();
     auto* videoBrowse = new QPushButton("Browse");
@@ -143,8 +142,7 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     useOpusFallbackCheck->setChecked(false);
 
     form->addRow("MOQ endpoint", endpointEdit);
-    form->addRow("MOQ namespace", namespaceEdit);
-    form->addRow("Stream name", streamNameEdit);
+    form->addRow("MOQ namespace (tuple, /-separated)", namespaceEdit);
     form->addRow("M2TS source", videoRow);
     form->addRow("Alternate M2TS source", audioRow);
     form->addRow("Camera source", cameraSourceCombo);
@@ -243,7 +241,6 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 void MainWindow::setUiEnabled(bool enabled) {
     endpointEdit->setEnabled(enabled);
     namespaceEdit->setEnabled(enabled);
-    streamNameEdit->setEnabled(enabled);
     videoSourceEdit->setEnabled(enabled);
     audioSourceEdit->setEnabled(enabled);
     cameraSourceCombo->setEnabled(enabled);
@@ -336,7 +333,6 @@ PublishConfig MainWindow::currentConfig() const {
     PublishConfig cfg;
     cfg.moqEndpoint = endpointEdit->text().trimmed();
     cfg.namespaceName = namespaceEdit->text().trimmed();
-    cfg.streamName = streamNameEdit->text().trimmed();
     cfg.videoSource = videoSourceEdit->text().trimmed();
     cfg.audioSource = audioSourceEdit->text().trimmed();
     cfg.cameraDeviceId = cameraSourceCombo->currentData().toString();
@@ -367,7 +363,6 @@ void MainWindow::loadPreferences() {
     QSettings settings;
     endpointEdit->setText(settings.value(QStringLiteral("publish/endpoint"), endpointEdit->text()).toString());
     namespaceEdit->setText(settings.value(QStringLiteral("publish/namespace"), namespaceEdit->text()).toString());
-    streamNameEdit->setText(settings.value(QStringLiteral("publish/stream"), streamNameEdit->text()).toString());
 
     widthSpin->setValue(settings.value(QStringLiteral("video/width"), widthSpin->value()).toInt());
     heightSpin->setValue(settings.value(QStringLiteral("video/height"), heightSpin->value()).toInt());
@@ -392,7 +387,6 @@ void MainWindow::savePreferences() const {
     QSettings settings;
     settings.setValue(QStringLiteral("publish/endpoint"), endpointEdit->text().trimmed());
     settings.setValue(QStringLiteral("publish/namespace"), namespaceEdit->text().trimmed());
-    settings.setValue(QStringLiteral("publish/stream"), streamNameEdit->text().trimmed());
 
     settings.setValue(QStringLiteral("video/width"), widthSpin->value());
     settings.setValue(QStringLiteral("video/height"), heightSpin->value());
@@ -425,15 +419,15 @@ void MainWindow::handleStart() {
         return;
     }
 
-    if (cfg.moqEndpoint.isEmpty() || cfg.namespaceName.isEmpty() || cfg.streamName.isEmpty()) {
-        QMessageBox::warning(this, "Missing config", "MOQ endpoint, namespace and stream name are required.");
+    if (cfg.moqEndpoint.isEmpty() || cfg.namespaceName.isEmpty()) {
+        QMessageBox::warning(this, "Missing config", "MOQ endpoint and namespace are required.");
         return;
     }
 
     setUiEnabled(false);
     resetStats();
     statusLabel->setText("Connecting...");
-    logBrowser->append(QString("%1 | Publishing started for stream %2/%3").arg(QDateTime::currentDateTime().toString(Qt::ISODate), cfg.namespaceName, cfg.streamName));
+    logBrowser->append(QString("%1 | Publishing started for namespace %2").arg(QDateTime::currentDateTime().toString(Qt::ISODate), cfg.namespaceName));
 
     emit startRequested(cfg);
 }

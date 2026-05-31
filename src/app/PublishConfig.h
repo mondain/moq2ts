@@ -11,8 +11,7 @@ enum class AudioCodecPreset {
 
 struct PublishConfig {
     QString moqEndpoint = "mock://local";
-    QString namespaceName = "live";
-    QString streamName = "sample-stream";
+    QString namespaceName = "live/paul1";
 
     QString videoSource = QString(); // M2TS file/pipe/URL for H.264 source
     QString audioSource = QString(); // M2TS file/pipe/URL for audio source (optional)
