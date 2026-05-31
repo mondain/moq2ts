@@ -12,10 +12,19 @@ struct MsftsCatalog {
     int programNumber = 1;
     int pmtPid = -1;
     int pcrPid = -1;
-    QString timestampMode = QStringLiteral("none");
+    // Per MSFTS Section 6.9, m2tsTimestampMode applies only to 192-octet source
+    // packets ("arrival-time" or "opaque") and MUST NOT be present for 188.
+    QString timestampMode;
     QByteArray initData;
     QString timelineTrack;
-    int timelineIntervalMs = 1000;
+
+    // MSF common track/root fields (draft-ietf-moq-msf-00).
+    bool isLive = true;
+    int targetLatencyMs = 1000;
+    QString role = QStringLiteral("video");
+    QString mimeType = QStringLiteral("video/mp2t");
+    qint64 bitrateBps = 0;
+    qint64 generatedAtMs = 0;
 };
 
 class MsftsMuxer {
