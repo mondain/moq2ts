@@ -146,6 +146,7 @@ void LivePipeline::runLoop() {
             .initData = capture.initData(),
             .timelineTrack = timelineTrackName,
             .namespaceName = m_config.namespaceName,
+            .randomAccess = capture.randomAccessActive(),
             .isLive = true,
             .bitrateBps = static_cast<qint64>(m_config.videoTargetBitrateKbps) * 1000,
             .generatedAtMs = QDateTime::currentMSecsSinceEpoch(),
@@ -175,6 +176,8 @@ void LivePipeline::runLoop() {
                 return std::nullopt;
             }
 
+            const bool startsGroup = object.startsGroup;
+
             PublishedObject published;
             published.trackName = trackName;
             published.payload = std::move(object.payload);
@@ -182,7 +185,7 @@ void LivePipeline::runLoop() {
             published.objectId = object.objectId;
             published.mediaTimeUs = static_cast<std::uint64_t>(objects) * static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
             published.mediaDurationUs = static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
-            if ((objects % timelineEveryObjects) == 0) {
+            if (startsGroup || (objects % timelineEveryObjects) == 0) {
                 PublishedObject timeline;
                 timeline.trackName = timelineTrackName;
                 timeline.payload = timelinePayload(published.groupId,
