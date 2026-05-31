@@ -186,6 +186,17 @@ struct LibavCaptureSource::Impl {
     std::uint64_t nextObjectId = 0;
     int pmtPidValue = -1;
     int pcrPidValue = -1;
+    // Absolute byte offset (since stream start) at which each MOQT group begins.
+    // A new group starts where a keyframe's muxed TS packets begin. Consumed in
+    // order by readObject. Front entry is the next pending boundary.
+    std::deque<std::uint64_t> groupBoundaries;
+    // Total bytes ever appended to muxedBytes; the absolute cursor for the byte
+    // currently at muxedBytes[0] is (muxedConsumed).
+    std::uint64_t muxedProduced = 0;
+    std::uint64_t muxedConsumed = 0;
+    std::uint64_t nextGroupId = 0;
+    bool sawVideoKeyframe = false;
+    bool hasVideoStream = false;
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
     struct StreamState {
@@ -346,6 +357,7 @@ struct LibavCaptureSource::Impl {
             }
             return false;
         }
+        hasVideoStream = true;
         return addOutputStream(std::move(stream), error);
     }
 
@@ -565,12 +577,25 @@ struct LibavCaptureSource::Impl {
             }
             av_packet_rescale_ts(packet.get(), stream->encoder->time_base, stream->outputStream->time_base);
             packet->stream_index = stream->outputStream->index;
+            const bool isVideoKey = stream->video && (packet->flags & AV_PKT_FLAG_KEY) != 0;
+            const std::uint64_t beforeSize = muxedProduced;
             rc = av_interleaved_write_frame(outputFormat, packet.get());
             if (rc < 0) {
                 if (error) {
                     *error = QStringLiteral("Failed writing MPEG-TS packet: %1").arg(avError(rc));
                 }
                 return false;
+            }
+            // Account for everything writePacket appended during this call.
+            muxedProduced = muxedConsumed + static_cast<std::uint64_t>(muxedBytes.size());
+            if (isVideoKey) {
+                // The keyframe's TS packets begin at beforeSize. Record it as a
+                // group boundary unless it coincides with the very first bytes
+                // (the initial group needs no explicit boundary).
+                if (beforeSize > 0 || !groupBoundaries.empty()) {
+                    groupBoundaries.push_back(beforeSize);
+                }
+                sawVideoKeyframe = true;
             }
         }
         return true;
