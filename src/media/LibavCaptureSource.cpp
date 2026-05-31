@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -203,6 +204,7 @@ struct LibavCaptureSource::Impl {
     bool hasVideoStream = false;
     std::uint64_t nextObjectIdInGroup = 0;
     std::uint64_t pendingGroupBoundary = 0;  // absolute offset of the next group start, or 0 if none
+    std::uint64_t rapBoundaryCount = 0;  // diagnostic: number of RAP boundaries recorded
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
     struct StreamState {
@@ -362,7 +364,24 @@ struct LibavCaptureSource::Impl {
         stream->encoder->framerate = AVRational{config.videoFramerate, 1};
         stream->encoder->pix_fmt = AV_PIX_FMT_YUV420P;
         stream->encoder->bit_rate = static_cast<int64_t>(config.videoTargetBitrateKbps) * 1000;
+        // Bounded, closed GOP so the live stream emits periodic IDRs (every
+        // keyframeIntervalMs). Without this the encoder uses an effectively long
+        // default GOP, no random-access points appear after the first frame, and
+        // MOQT grouping degenerates to a single group.
+        const int frameRate = std::max(1, config.videoFramerate);
+        int gopSize = static_cast<int>(
+            (static_cast<long long>(frameRate) * std::max(1, config.keyframeIntervalMs) + 500) / 1000);
+        gopSize = std::max(1, gopSize);
+        stream->encoder->gop_size = gopSize;
+        stream->encoder->max_b_frames = 0;  // closed, low-latency GOP
         av_opt_set(stream->encoder->priv_data, "profile", "baseline", 0);
+        // Belt-and-suspenders for the libx264 fallback: pin keyint and disable
+        // scene-cut so IDRs land on a fixed period. These options do not exist on
+        // libopenh264 (the primary encoder), which honors gop_size directly; the
+        // return codes are intentionally ignored so an absent option is not fatal.
+        av_opt_set_int(stream->encoder->priv_data, "keyint", gopSize, 0);
+        av_opt_set_int(stream->encoder->priv_data, "min-keyint", gopSize, 0);
+        av_opt_set(stream->encoder->priv_data, "sc_threshold", "0", 0);
         int rc = avcodec_open2(stream->encoder, encoder, nullptr);
         if (rc < 0) {
             if (error) {
@@ -667,8 +686,17 @@ struct LibavCaptureSource::Impl {
             if (!sawVideoKeyframe) {
                 // First RAP: group 0 starts at byte 0 and contains it; do not push.
                 sawVideoKeyframe = true;
+                std::fprintf(stderr, "[moqxr][diag] RAP scan: videoPid=%d pcrPid=%d\n",
+                             videoPid, pcrPidValue);
             } else {
                 groupBoundaries.push_back(pos);
+                ++rapBoundaryCount;
+                if (rapBoundaryCount % 30 == 1) {
+                    std::fprintf(stderr,
+                                 "[moqxr][diag] RAP boundaries=%llu latest offset=%llu\n",
+                                 (unsigned long long)rapBoundaryCount,
+                                 (unsigned long long)pos);
+                }
             }
         }
         scannedTo = pos > scannedTo ? pos : scannedTo;
