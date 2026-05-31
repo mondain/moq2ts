@@ -38,4 +38,10 @@ grep -q 'randomAccessActive' "$HDR" \
 grep -q 'if (catalog.randomAccess)' "$MUXER" \
   || fail "m2tsRandomAccess must be gated on catalog.randomAccess"
 
+grep -q 'keyframeIntervalMs' "$REPO_ROOT/src/app/PublishConfig.h" \
+  || fail "PublishConfig must expose keyframeIntervalMs"
+
+grep -q 'gop_size = gopSize' "$CAPTURE" \
+  || fail "encoder must set a bounded gop_size for periodic IDRs"
+
 printf 'keyframe-aligned-groups guards passed\n'
