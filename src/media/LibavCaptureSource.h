@@ -38,6 +38,7 @@ public:
     int pmtPid() const;
     int pcrPid() const;
     QByteArray initData() const;
+    bool randomAccessActive() const;
 
 private:
     struct Impl;

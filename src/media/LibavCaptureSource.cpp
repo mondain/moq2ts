@@ -1052,4 +1052,11 @@ QByteArray LibavCaptureSource::initData() const {
     return m_impl->initDataBytes;
 }
 
+bool LibavCaptureSource::randomAccessActive() const {
+    // We can only honestly claim every group begins at a RAP once we are
+    // grouping by keyframe, which requires a video stream and at least one
+    // observed keyframe.
+    return m_impl->hasVideoStream && m_impl->sawVideoKeyframe;
+}
+
 } // namespace moq2ts
