@@ -132,7 +132,8 @@ void LivePipeline::runLoop() {
         }
 
         const int packetsPerObject = std::max(1, m_config.targetSegmentBytes / capture.packetSize());
-        const QString trackName = QStringLiteral("m2ts");
+        // Track name defaults to "program-1" when not supplied by other means.
+        const QString trackName = QStringLiteral("program-1");
         const QString timelineTrackName = trackName + QStringLiteral(".timeline");
         const QByteArray catalog = MsftsMuxer::catalogJson({
             .track = trackName,
@@ -143,6 +144,7 @@ void LivePipeline::runLoop() {
             .pcrPid = capture.pcrPid(),
             .initData = capture.initData(),
             .timelineTrack = timelineTrackName,
+            .namespaceName = m_config.namespaceName,
             .bitrateBps = static_cast<qint64>(m_config.videoTargetBitrateKbps) * 1000,
             .generatedAtMs = QDateTime::currentMSecsSinceEpoch(),
         });
@@ -218,7 +220,8 @@ void LivePipeline::runLoop() {
     }
 
     const int packetsPerObject = std::max(1, m_config.targetSegmentBytes / packetizer.packetSize());
-    const QString trackName = QStringLiteral("m2ts");
+    // Track name defaults to "program-1" when not supplied by other means.
+    const QString trackName = QStringLiteral("program-1");
     const QString timelineTrackName = trackName + QStringLiteral(".timeline");
     const QByteArray catalog = MsftsMuxer::catalogJson({
         .track = trackName,
@@ -232,6 +235,7 @@ void LivePipeline::runLoop() {
         .timestampMode = packetizer.packetSize() == 192 ? QStringLiteral("opaque") : QString(),
         .initData = packetizer.initData(),
         .timelineTrack = timelineTrackName,
+        .namespaceName = m_config.namespaceName,
         .bitrateBps = static_cast<qint64>(m_config.videoTargetBitrateKbps) * 1000,
         .generatedAtMs = QDateTime::currentMSecsSinceEpoch(),
     });

@@ -18,6 +18,11 @@ struct MsftsCatalog {
     QByteArray initData;
     QString timelineTrack;
 
+    // Catalog format identifier (root) and MSF track namespace (per-track,
+    // MSF 5.1.10). Emitted only when non-empty.
+    QString format = QStringLiteral("msf");
+    QString namespaceName;
+
     // MSF common track/root fields (draft-ietf-moq-msf-00).
     bool isLive = true;
     int targetLatencyMs = 1000;

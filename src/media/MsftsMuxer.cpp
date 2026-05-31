@@ -9,6 +9,9 @@ namespace moq2ts {
 QByteArray MsftsMuxer::catalogJson(const MsftsCatalog& catalog) {
     QJsonObject mediaTrack;
     mediaTrack.insert(QStringLiteral("name"), catalog.track);
+    if (!catalog.namespaceName.isEmpty()) {
+        mediaTrack.insert(QStringLiteral("namespace"), catalog.namespaceName);
+    }
     mediaTrack.insert(QStringLiteral("packaging"), QStringLiteral("m2ts"));
     // MSF common track fields (draft-ietf-moq-msf-00).
     mediaTrack.insert(QStringLiteral("isLive"), catalog.isLive);
@@ -49,6 +52,9 @@ QByteArray MsftsMuxer::catalogJson(const MsftsCatalog& catalog) {
         // to, and an application/json mime type.
         QJsonObject timelineTrack;
         timelineTrack.insert(QStringLiteral("name"), catalog.timelineTrack);
+        if (!catalog.namespaceName.isEmpty()) {
+            timelineTrack.insert(QStringLiteral("namespace"), catalog.namespaceName);
+        }
         timelineTrack.insert(QStringLiteral("type"), QStringLiteral("mediatimeline"));
         QJsonArray depends;
         depends.append(catalog.track);
@@ -60,6 +66,9 @@ QByteArray MsftsMuxer::catalogJson(const MsftsCatalog& catalog) {
 
     QJsonObject root;
     root.insert(QStringLiteral("version"), 1);
+    if (!catalog.format.isEmpty()) {
+        root.insert(QStringLiteral("format"), catalog.format);
+    }
     if (catalog.isLive && catalog.generatedAtMs > 0) {
         // SHOULD NOT be included when isLive is false (MSF 5.1.6).
         root.insert(QStringLiteral("generatedAt"), catalog.generatedAtMs);
