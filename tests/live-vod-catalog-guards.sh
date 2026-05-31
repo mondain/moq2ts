@@ -15,10 +15,14 @@ grep -q 'qint64 trackDurationMs' "$HDR" \
 grep -q 'bool randomAccess' "$HDR" \
   || fail "MsftsCatalog must carry randomAccess"
 
-# trackDuration must be VOD-gated (never emitted when isLive is true).
-grep -q '!catalog.isLive && catalog.trackDurationMs > 0' "$MUXER" \
-  || fail "trackDuration must be gated on !isLive && trackDurationMs > 0"
-grep -q 'if (catalog.randomAccess)' "$MUXER" \
+# trackDuration must be VOD-gated (never emitted when isLive is true) and
+# threshold-gated. Checked as two independent conditions so a reasonable
+# refactor (e.g. nested ifs) does not produce a false negative.
+grep -q '!catalog.isLive' "$MUXER" \
+  || fail "trackDuration emission must check !catalog.isLive"
+grep -q 'catalog.trackDurationMs > 0' "$MUXER" \
+  || fail "trackDuration emission must check trackDurationMs > 0"
+grep -q 'catalog.randomAccess' "$MUXER" \
   || fail "m2tsRandomAccess must be gated on catalog.randomAccess"
 
 # Duration probe exists and is libav-guarded.

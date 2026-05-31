@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <QDateTime>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
