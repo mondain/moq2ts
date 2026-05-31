@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QMetaObject>
+#include <QMetaType>
 
 #include <chrono>
 #include <future>
@@ -10,6 +11,12 @@
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    // int64_t is not a built-in Qt metatype. LivePipeline::stats and
+    // MoqxrPublisher::framePublished are emitted from the pipeline worker
+    // thread, so their connections are queued; without registering the alias Qt
+    // drops them ("Cannot queue arguments of type 'int64_t'") and the Stats tab
+    // never updates. Register it before any cross-thread signal can be emitted.
+    qRegisterMetaType<int64_t>("int64_t");
     QCoreApplication::setOrganizationName("moq2ts");
     QCoreApplication::setApplicationName("moq2ts-publisher");
 
