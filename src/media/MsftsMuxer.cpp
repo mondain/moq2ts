@@ -39,6 +39,14 @@ QByteArray MsftsMuxer::catalogJson(const MsftsCatalog& catalog) {
     if (catalog.packetSize == 192 && !catalog.timestampMode.isEmpty()) {
         mediaTrack.insert(QStringLiteral("m2tsTimestampMode"), catalog.timestampMode);
     }
+    // MSFTS 6.8: only advertised when every group begins at a random-access point.
+    if (catalog.randomAccess) {
+        mediaTrack.insert(QStringLiteral("m2tsRandomAccess"), true);
+    }
+    // MSF 5.1.37: track duration is VOD-only (MUST NOT appear when isLive true).
+    if (!catalog.isLive && catalog.trackDurationMs > 0) {
+        mediaTrack.insert(QStringLiteral("trackDuration"), catalog.trackDurationMs);
+    }
     if (!catalog.initData.isEmpty()) {
         mediaTrack.insert(QStringLiteral("initData"), QString::fromLatin1(catalog.initData.toBase64()));
     }
