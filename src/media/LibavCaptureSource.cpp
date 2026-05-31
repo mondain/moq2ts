@@ -197,6 +197,8 @@ struct LibavCaptureSource::Impl {
     std::uint64_t nextGroupId = 0;
     bool sawVideoKeyframe = false;
     bool hasVideoStream = false;
+    std::uint64_t nextObjectIdInGroup = 0;
+    std::uint64_t pendingGroupBoundary = 0;  // absolute offset of the next group start, or 0 if none
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
     struct StreamState {
@@ -487,21 +489,76 @@ struct LibavCaptureSource::Impl {
 
     bool readObject(int packetsPerObject, M2tsObject* object, std::atomic<bool>& running, QString* error) {
         const int targetBytes = std::max(1, packetsPerObject) * 188;
-        while (running.load(std::memory_order_acquire) && muxedBytes.size() < targetBytes) {
+
+        // An object must not cross a group boundary; the boundary becomes the
+        // first byte of the next object (which starts a new group). Work in the
+        // absolute byte space tracked by muxedConsumed.
+        const std::uint64_t windowStart = muxedConsumed;
+        std::uint64_t target = static_cast<std::uint64_t>(targetBytes);
+        bool cutAtBoundary = false;
+
+        const auto recomputeTarget = [&]() {
+            // Drop boundaries at or before the window start (already consumed or
+            // coincident with this object's first byte).
+            while (!groupBoundaries.empty() && groupBoundaries.front() <= windowStart) {
+                groupBoundaries.pop_front();
+            }
+            if (!groupBoundaries.empty()) {
+                const std::uint64_t boundaryOffset = groupBoundaries.front() - windowStart;
+                if (boundaryOffset > 0 && boundaryOffset < target) {
+                    target = boundaryOffset;
+                    cutAtBoundary = true;
+                }
+            }
+        };
+        recomputeTarget();
+
+        while (running.load(std::memory_order_acquire) &&
+               static_cast<std::uint64_t>(muxedBytes.size()) < target) {
             if (!pumpOnce(error)) {
                 return false;
             }
+            // pumpOnce may have appended new keyframe boundaries; a closer one
+            // can tighten the target for this object.
+            recomputeTarget();
         }
 
-        const int alignedBytes = (std::min<qsizetype>(muxedBytes.size(), targetBytes) / 188) * 188;
+        const std::uint64_t available = static_cast<std::uint64_t>(muxedBytes.size());
+        const std::uint64_t take = std::min(available, target);
+        const int alignedBytes = static_cast<int>((take / 188) * 188);
         if (alignedBytes <= 0) {
             return false;
         }
 
         object->payload = muxedBytes.left(alignedBytes);
         muxedBytes.remove(0, alignedBytes);
-        object->groupId = 0;
-        object->objectId = nextObjectId++;
+        muxedConsumed += static_cast<std::uint64_t>(alignedBytes);
+
+        // A new group begins when this object starts exactly on a recorded
+        // boundary, or for the very first object overall.
+        bool startGroup = (nextObjectId == 0);
+        if (!startGroup && pendingGroupBoundary != 0 && windowStart == pendingGroupBoundary) {
+            startGroup = true;
+        }
+        if (startGroup) {
+            if (nextObjectId != 0) {
+                ++nextGroupId;
+            }
+            object->groupId = nextGroupId;
+            object->objectId = 0;
+            object->startsGroup = true;
+            nextObjectIdInGroup = 1;
+        } else {
+            object->groupId = nextGroupId;
+            object->objectId = nextObjectIdInGroup++;
+            object->startsGroup = false;
+        }
+        // If we cut this object at a boundary, that boundary is where the NEXT
+        // object (and the next group) begins.
+        if (cutAtBoundary && !groupBoundaries.empty()) {
+            pendingGroupBoundary = groupBoundaries.front();
+        }
+        ++nextObjectId;
         return true;
     }
 
