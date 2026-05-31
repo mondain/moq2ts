@@ -145,6 +145,7 @@ void LivePipeline::runLoop() {
             .initData = capture.initData(),
             .timelineTrack = timelineTrackName,
             .namespaceName = m_config.namespaceName,
+            .isLive = true,
             .bitrateBps = static_cast<qint64>(m_config.videoTargetBitrateKbps) * 1000,
             .generatedAtMs = QDateTime::currentMSecsSinceEpoch(),
         });
@@ -236,8 +237,11 @@ void LivePipeline::runLoop() {
         .initData = packetizer.initData(),
         .timelineTrack = timelineTrackName,
         .namespaceName = m_config.namespaceName,
+        .trackDurationMs = M2tsPacketizer::probeDurationMs(sourcePath),
+        .randomAccess = true,
+        .isLive = false,
         .bitrateBps = static_cast<qint64>(m_config.videoTargetBitrateKbps) * 1000,
-        .generatedAtMs = QDateTime::currentMSecsSinceEpoch(),
+        // generatedAt is suppressed for VOD by catalogJson (isLive false).
     });
 
     int64_t objects = 0;
