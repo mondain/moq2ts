@@ -5,7 +5,7 @@ IMAGE_NAME="moq2ts-bookworm-builder"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTAINER_BUILD_DIR="build-bookworm"
-MOQ2TS_BUILD_WITH_MOCK_MOQXR="${MOQ2TS_BUILD_WITH_MOCK_MOQXR:-ON}"
+MOQ2TS_BUILD_WITH_MOCK_MOQXR="${MOQ2TS_BUILD_WITH_MOCK_MOQXR:-OFF}"
 DOCKER_RUN_ARGS=(
   --rm
   -t

@@ -5,7 +5,7 @@ project(moq2ts-ui
     DESCRIPTION "Cross-platform MOQ live publisher for H.264/AAC-Opus M2TS"
     LANGUAGES CXX)
 
-option(MOQ2TS_BUILD_WITH_MOCK_MOQXR "Build without linking to a moqxr SDK and use the mock publisher adapter" ON)
+option(MOQ2TS_BUILD_WITH_MOCK_MOQXR "Build without linking to a moqxr SDK and use the mock publisher adapter" OFF)
 option(MOQ2TS_ENABLE_OPENH264 "Enable OpenH264 integration for H.264 encoding" ON)
 option(MOQ2TS_ENABLE_LIBAV_AUDIO "Enable libavcodec/libavformat integration" ON)
 option(MOQ2TS_ENABLE_LIBOPUS "Enable libopus fallback audio encoder path" ON)
