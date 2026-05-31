@@ -36,8 +36,8 @@ if grep -q 'chown -R' "$BUILD_SCRIPT"; then
   exit 1
 fi
 
-if ! grep -q 'MOQ2TS_BUILD_WITH_MOCK_MOQXR="${MOQ2TS_BUILD_WITH_MOCK_MOQXR:-ON}"' "$BUILD_SCRIPT"; then
-  printf 'Bookworm build script does not allow selecting the real moqxr publisher build\n' >&2
+if ! grep -qE 'MOQ2TS_BUILD_WITH_MOCK_MOQXR="\$\{MOQ2TS_BUILD_WITH_MOCK_MOQXR:-(ON|OFF)\}"' "$BUILD_SCRIPT"; then
+  printf 'Bookworm build script does not allow selecting the moqxr publisher build via env var\n' >&2
   exit 1
 fi
 

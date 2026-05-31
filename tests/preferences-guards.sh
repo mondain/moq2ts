@@ -18,7 +18,7 @@ for symbol in loadPreferences savePreferences closeEvent; do
   fi
 done
 
-for key in publish/endpoint publish/namespace publish/stream video/width video/height video/framerate video/bitrate audio/sampleRate audio/channels audio/bitrate audio/codec fragment/durationMs fragment/targetBytes m2ts/program use/openh264 use/libav use/libopusFallback; do
+for key in publish/endpoint publish/namespace video/width video/height video/framerate video/bitrate audio/sampleRate audio/channels audio/bitrate audio/codec fragment/durationMs fragment/targetBytes m2ts/program use/openh264 use/libav use/libopusFallback; do
   if ! grep -q "$key" "$MAIN_WINDOW_CPP"; then
     printf 'preferences are missing key: %s\n' "$key" >&2
     exit 1
