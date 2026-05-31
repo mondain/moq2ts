@@ -22,6 +22,12 @@ struct MsftsCatalog {
     // MSF 5.1.10). Emitted only when non-empty.
     QString format = QStringLiteral("msf");
     QString namespaceName;
+    // VOD-only track duration in integer milliseconds (MSF 5.1.37); emitted only
+    // when isLive is false and the value is > 0.
+    qint64 trackDurationMs = 0;
+    // When true, advertise m2tsRandomAccess (MSFTS 6.8): every MOQT group begins
+    // at a random-access point.
+    bool randomAccess = false;
 
     // MSF common track/root fields (draft-ietf-moq-msf-00).
     bool isLive = true;
