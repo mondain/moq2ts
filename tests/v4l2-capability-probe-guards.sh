@@ -35,4 +35,15 @@ grep -q 'av_q2d(negRate)' "$CAPTURE" \
 grep -q '#if defined(__linux__)' "$CAPS_CPP" \
   || fail "queryModes/groupNodesForCamera must be guarded for Linux"
 
+PREVIEW="$REPO_ROOT/src/media/LibavPreviewWorker.cpp"
+
+grep -q 'CaptureOpen resolveCaptureOpen' "$CAPS_HDR" \
+  || fail "V4l2Capabilities must declare resolveCaptureOpen"
+
+grep -q 'resolveCaptureOpen' "$PREVIEW" \
+  || fail "preview must select node/format via resolveCaptureOpen"
+
+grep -q 'input_format' "$PREVIEW" \
+  || fail "preview must request the MJPEG input_format when selected"
+
 printf 'v4l2-capability-probe guards passed\n'
