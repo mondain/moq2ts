@@ -318,6 +318,22 @@ struct LibavCaptureSource::Impl {
         }
         headerWritten = true;
 
+        // One-shot pipeline confirmation: for each stream, report how the camera
+        // input is decoded, what it is re-encoded to, and the container it is
+        // muxed into before MOQT packaging. Makes the decode->encode->mux path
+        // explicit in the logs (e.g. "decode=mjpeg -> encode=h264 -> mux=mpegts").
+        for (const auto& stream : streams) {
+            const char* decodeName =
+                (stream->decoder && stream->decoder->codec) ? stream->decoder->codec->name : "?";
+            const char* encodeName =
+                (stream->encoder && stream->encoder->codec) ? stream->encoder->codec->name : "?";
+            const char* muxName =
+                (outputFormat && outputFormat->oformat) ? outputFormat->oformat->name : "?";
+            std::fprintf(stderr, "[moqxr][pipeline] %s: decode=%s -> encode=%s -> mux=%s\n",
+                         stream->video ? "video" : "audio", decodeName, encodeName, muxName);
+        }
+        std::fflush(stderr);
+
         extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidValue);
         pumpUntilInitData();
         return true;

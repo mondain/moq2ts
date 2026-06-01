@@ -80,3 +80,16 @@ if ! grep -q 'AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)' "$SOURCE"; then
   printf 'live libav capture should skip corrupt decode frames instead of aborting\n' >&2
   exit 1
 fi
+
+# Full-range MJPEG (yuvj*) frames must have the swscale color range set so the
+# conversion to the encoder's limited-range YUV420P is correct (and quiet).
+if ! grep -q 'applyScalerRange(' "$SOURCE"; then
+  printf 'live libav capture should set swscale color range for full-range frames\n' >&2
+  exit 1
+fi
+
+# The decode->encode->mux pipeline should log a one-shot confirmation at open.
+if ! grep -q 'decode=%s -> encode=%s -> mux=%s' "$SOURCE"; then
+  printf 'live libav capture should log the decode->encode->mux pipeline at open\n' >&2
+  exit 1
+fi
