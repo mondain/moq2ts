@@ -1,6 +1,6 @@
 #include "media/V4l2Capabilities.h"
 
-#include <algorithm>
+#include <cmath>
 
 namespace moq2ts {
 
@@ -34,8 +34,12 @@ V4l2Selection selectBestMode(const std::vector<V4l2NodeModes>& candidates,
                 haveRawMeets = true;
             }
             // Track best-effort (highest fps at the size; MJPEG breaks ties).
-            if (!haveBestEffort || m.fps > bestEffort.negotiatedFps ||
-                (m.fps == bestEffort.negotiatedFps && isMjpeg && !bestEffort.useMjpeg)) {
+            // Use the same epsilon as meets-target so driver rounding (e.g.
+            // 29.97 vs 30) does not defeat the MJPEG tiebreak.
+            const bool higher = m.fps > bestEffort.negotiatedFps + kFpsEpsilon;
+            const bool tie = std::abs(m.fps - bestEffort.negotiatedFps) <= kFpsEpsilon;
+            if (!haveBestEffort || higher ||
+                (tie && isMjpeg && !bestEffort.useMjpeg)) {
                 bestEffort = {cand.node, isMjpeg, m.fps, meets};
                 haveBestEffort = true;
             }
@@ -50,7 +54,7 @@ V4l2Selection selectBestMode(const std::vector<V4l2NodeModes>& candidates,
     V4l2Selection fallback;
     fallback.node = candidates.empty() ? std::string() : candidates.front().node;
     fallback.useMjpeg = false;
-    fallback.negotiatedFps = reqFps;
+    fallback.negotiatedFps = 0.0;
     fallback.meetsTarget = false;
     return fallback;
 }

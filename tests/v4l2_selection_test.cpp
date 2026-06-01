@@ -1,5 +1,6 @@
 #include "media/V4l2Capabilities.h"
 
+#include <cstdint>
 #include <iostream>
 #include <string>
 
