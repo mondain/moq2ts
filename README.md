@@ -30,12 +30,18 @@ request (see the [Build workflow](.github/workflows/build.yml)):
 Per-commit packages are attached to each run on the Actions tab. Tagged releases
 (`v*`) additionally publish these assets to a GitHub Release.
 
-These CI binaries are **mock-publisher builds** (`MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON`,
-since CI has no access to the private moqxr SDK). They include the full capture
-and transcode stack (Qt6 + ffmpeg/libav + openh264 + opus) and are intended for
-local capture, muxing, preview, and object-generation testing — they only accept
-`mock://` endpoints. To publish to a real relay, build from source against a local
-`../moqxr` checkout as described under [moqxr integration](#moqxr-integration).
+These CI binaries are **real, relay-capable builds**: each links the prebuilt
+openmoq publisher SDK from the public `mondain/moqxr` releases (pinned via the
+`MOQXR_VERSION` workflow variable) together with the full capture and transcode
+stack (Qt6 + ffmpeg/libav + openh264 + opus), so they can publish to a real MOQ
+relay endpoint. The SDK ships static libraries (publisher + picoquic/picotls);
+OpenSSL is linked from the platform. On Windows the build uses MSVC + vcpkg to
+match the SDK's ABI; Linux and macOS use the system GCC/Clang toolchains.
+
+A mock build (UI, file packetization, and object generation against `mock://`
+endpoints only) is still available locally with
+`-DMOQ2TS_BUILD_WITH_MOCK_MOQXR=ON`. See [moqxr integration](#moqxr-integration)
+for linking the SDK (`MOQXR_SDK_DIR`) or a local `../moqxr` source checkout.
 
 To cut a release, push a version tag:
 
@@ -170,9 +176,20 @@ exists. Launch the packaged app with:
 
 ## moqxr integration
 
-`src/publish/MoqxrPublisher.cpp` wires the MSFTS object stream into the local
-moqxr `Publisher::publish_live_objects` API. Build against the neighboring
-checkout with:
+`src/publish/MoqxrPublisher.cpp` wires the MSFTS object stream into the moqxr
+`Publisher::publish_live_objects` API. There are two ways to link the real
+publisher (both require OpenSSL on the system).
+
+Link a prebuilt SDK from the `mondain/moqxr` releases (what CI uses) — extract the
+archive for your platform and point `MOQXR_SDK_DIR` at it:
+
+```bash
+cmake -S . -B build \
+  -DMOQXR_SDK_DIR=/path/to/openmoq-publisher-v0.3.2-Linux \
+  -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF
+```
+
+Or build against a neighboring moqxr source checkout:
 
 ```bash
 cmake -S . -B build \

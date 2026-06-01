@@ -110,24 +110,43 @@ if(MOQ2TS_ENABLE_LIBOPUS)
 endif()
 
 # moqxr API discovery.
+#
+# Two ways to link the real (non-mock) publisher:
+#   - MOQXR_SDK_DIR: a prebuilt SDK extracted from an openmoq-publisher release
+#     (include/ + lib/ of static libraries). Preferred for CI and releases.
+#   - MOQXR_SOURCE_DIR: a local moqxr source checkout, built via add_subdirectory.
+set(MOQXR_SDK_DIR "" CACHE PATH "Path to a prebuilt openmoq publisher SDK (include/ + lib/). When set, link the prebuilt libraries instead of building moqxr from source.")
+set(MOQXR_USE_PREBUILT_SDK FALSE)
+if(MOQXR_SDK_DIR)
+    set(MOQXR_USE_PREBUILT_SDK TRUE)
+endif()
+
 set(MOQXR_PUBLISH_INCLUDE_DIR_HINT "${MOQXR_SOURCE_DIR}/include" CACHE PATH "Optional moqxr include directory")
 find_path(MOQXR_PUBLISH_INCLUDE_DIR
     NAMES openmoq/publisher/publisher_api.h
-    PATHS ${MOQXR_PUBLISH_INCLUDE_DIR_HINT} /usr/include /usr/local/include /opt/include
+    PATHS "${MOQXR_SDK_DIR}/include" ${MOQXR_PUBLISH_INCLUDE_DIR_HINT} /usr/include /usr/local/include /opt/include
 )
 if(MOQXR_PUBLISH_INCLUDE_DIR)
     set(MOQXR_PUBLISH_FOUND TRUE)
 else()
     set(MOQXR_PUBLISH_FOUND FALSE)
     if(NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR)
-        message(FATAL_ERROR "moqxr publish headers not found. Set MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON or provide MOQXR_SOURCE_DIR/MOQXR_PUBLISH_INCLUDE_DIR_HINT.")
+        message(FATAL_ERROR "moqxr publish headers not found. Set MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON or provide MOQXR_SDK_DIR/MOQXR_SOURCE_DIR/MOQXR_PUBLISH_INCLUDE_DIR_HINT.")
     endif()
     message(STATUS "moqxr headers not found. Building mock publisher adapter.")
 endif()
 
 if(MOQXR_PUBLISH_FOUND AND NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR)
     add_compile_definitions(MOQ2TS_HAS_MOQXR)
-    if(EXISTS "${MOQXR_SOURCE_DIR}/CMakeLists.txt" AND NOT TARGET openmoq_publisher_lib)
+    if(MOQXR_USE_PREBUILT_SDK)
+        # Link every static library shipped in the SDK (the publisher archive plus
+        # its picoquic/picotls/picohttp dependencies). OpenSSL is a system dep.
+        file(GLOB MOQXR_SDK_LIBS "${MOQXR_SDK_DIR}/lib/*.a" "${MOQXR_SDK_DIR}/lib/*.lib")
+        if(NOT MOQXR_SDK_LIBS)
+            message(FATAL_ERROR "MOQXR_SDK_DIR=${MOQXR_SDK_DIR} contains no lib/*.a or lib/*.lib. Point it at an extracted openmoq publisher SDK.")
+        endif()
+        find_package(OpenSSL REQUIRED)
+    elseif(EXISTS "${MOQXR_SOURCE_DIR}/CMakeLists.txt" AND NOT TARGET openmoq_publisher_lib)
         set(OPENMOQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         add_subdirectory("${MOQXR_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/moqxr" EXCLUDE_FROM_ALL)
     endif()
@@ -228,10 +247,24 @@ if(MOQXR_PUBLISH_FOUND)
     target_include_directories(moq2ts-publisher PRIVATE ${MOQXR_PUBLISH_INCLUDE_DIR})
 endif()
 
-if(NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR AND TARGET openmoq_publisher_lib)
+if(NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR AND MOQXR_USE_PREBUILT_SDK)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # GNU ld/lld: --start-group lets the linker rescan archives and resolve the
+        # circular picohttp/picoquic dependencies regardless of archive order.
+        target_link_libraries(moq2ts-publisher PRIVATE
+            -Wl,--start-group ${MOQXR_SDK_LIBS} -Wl,--end-group)
+    else()
+        # ld64 (macOS) and MSVC resolve cross-archive symbols without grouping.
+        target_link_libraries(moq2ts-publisher PRIVATE ${MOQXR_SDK_LIBS})
+    endif()
+    target_link_libraries(moq2ts-publisher PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    if(WIN32)
+        target_link_libraries(moq2ts-publisher PRIVATE ws2_32 iphlpapi bcrypt)
+    endif()
+elseif(NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR AND TARGET openmoq_publisher_lib)
     target_link_libraries(moq2ts-publisher PRIVATE openmoq_publisher_lib)
 elseif(NOT MOQ2TS_BUILD_WITH_MOCK_MOQXR)
-    message(FATAL_ERROR "MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF requires a local moqxr checkout exposing openmoq_publisher_lib. Set MOQXR_SOURCE_DIR.")
+    message(FATAL_ERROR "MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF requires either a prebuilt SDK (set MOQXR_SDK_DIR) or a local moqxr checkout exposing openmoq_publisher_lib (set MOQXR_SOURCE_DIR).")
 endif()
 
 install(TARGETS moq2ts-publisher

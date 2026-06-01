@@ -15,10 +15,12 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# CI has no access to the private moqxr sibling checkout, so every job builds the
-# mock publisher adapter (MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON). The full codec stack
-# (Qt6 + ffmpeg/libav + openh264 + opus) is installed so the published binaries
-# support in-process capture and H.264/AAC/Opus transcoding.
+env:
+  # Pinned openmoq publisher SDK release (mondain/moqxr, public). Bump to adopt a
+  # newer SDK. Each platform archive ships include/ + lib/ of static libraries so
+  # moq2ts links the real publisher (MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF) and the
+  # produced binaries can connect to a real relay. OpenSSL is a system dependency.
+  MOQXR_VERSION: v0.3.2
 
 jobs:
   linux:
@@ -33,16 +35,30 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config file imagemagick wget \
             qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev \
+            libssl-dev \
             libopenh264-dev \
             libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev \
             libswresample-dev libswscale-dev \
             libopus-dev
 
+      - name: Fetch moqxr SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          gh release download "$MOQXR_VERSION" --repo mondain/moqxr \
+            --pattern '*Linux*' --dir "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/moqxr-sdk"
+          tar xzf "$RUNNER_TEMP"/openmoq-publisher-*-Linux.tar.gz \
+            -C "$RUNNER_TEMP/moqxr-sdk" --strip-components=1
+          echo "MOQXR_SDK_DIR=$RUNNER_TEMP/moqxr-sdk" >> "$GITHUB_ENV"
+
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=ON
+          -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF
+          -DMOQXR_SDK_DIR="$MOQXR_SDK_DIR"
 
       - name: Build
         run: cmake --build build --parallel
@@ -104,14 +120,28 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install qt ffmpeg openh264 opus pkg-config cmake ninja
+          brew install qt ffmpeg openh264 opus openssl@3 pkg-config cmake ninja
+
+      - name: Fetch moqxr SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          gh release download "$MOQXR_VERSION" --repo mondain/moqxr \
+            --pattern '*macOS*' --dir "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/moqxr-sdk"
+          tar xzf "$RUNNER_TEMP"/openmoq-publisher-*-macOS.tar.gz \
+            -C "$RUNNER_TEMP/moqxr-sdk" --strip-components=1
+          echo "MOQXR_SDK_DIR=$RUNNER_TEMP/moqxr-sdk" >> "$GITHUB_ENV"
 
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=ON
+          -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF
+          -DMOQXR_SDK_DIR="$MOQXR_SDK_DIR"
           -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix)"
+          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
 
       - name: Build
         run: cmake --build build --parallel
@@ -133,50 +163,67 @@ jobs:
   windows:
     name: windows (x86_64)
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: msys2/setup-msys2@v2
+      # moqxr ships an MSVC-built Windows SDK, so moq2ts must also build with MSVC
+      # (the MinGW ABI is incompatible). Qt comes from the official MSVC binaries
+      # and the codec stack from vcpkg.
+      - name: Install Qt (MSVC)
+        uses: jurplel/install-qt-action@v4
         with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-multimedia
-            mingw-w64-x86_64-qt6-tools
-            mingw-w64-x86_64-openh264
-            mingw-w64-x86_64-ffmpeg
-            mingw-w64-x86_64-opus
+          version: '6.7.*'
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: qtmultimedia
+          cache: true
+
+      - name: Install codecs (vcpkg)
+        shell: pwsh
+        run: |
+          # pkg-config lets moq2ts's pkg_check_modules locate the vcpkg ffmpeg.
+          choco install pkgconfiglite --no-progress -y
+          vcpkg install --triplet x64-windows `
+            "ffmpeg[avcodec,avformat,avdevice,swresample,swscale]" `
+            openh264 opus
+
+      - name: Fetch moqxr SDK (MSVC)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:MOQXR_VERSION --repo mondain/moqxr `
+            --pattern '*Windows*' --dir $env:RUNNER_TEMP
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\openmoq-publisher-*-Windows.zip" | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\moqxr-extract" -Force
+          $inner = Get-ChildItem "$env:RUNNER_TEMP\moqxr-extract" -Directory | Select-Object -First 1
+          "MOQXR_SDK_DIR=$($inner.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure
-        run: >-
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=ON
+        shell: pwsh
+        run: |
+          $env:PKG_CONFIG_PATH = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\pkgconfig"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DMOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF `
+            -DMOQXR_SDK_DIR="$env:MOQXR_SDK_DIR" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build
-        run: cmake --build build --parallel
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
 
       - name: Package
+        shell: pwsh
         run: |
-          set -eux
-          mkdir -p dist/moq2ts-publisher
-          cp build/moq2ts-publisher.exe dist/moq2ts-publisher/
-          WINDEPLOYQT="$(command -v windeployqt6 || command -v windeployqt-qt6 || command -v windeployqt)"
-          "$WINDEPLOYQT" --release --no-translations --compiler-runtime \
-            dist/moq2ts-publisher/moq2ts-publisher.exe
-          # windeployqt copies the Qt runtime/plugins but not ffmpeg/openh264/opus;
-          # resolve the remaining MinGW DLL dependencies via ldd and copy them in.
-          ldd dist/moq2ts-publisher/moq2ts-publisher.exe \
-            | awk '/mingw64/ {print $3}' \
-            | while read -r dll; do cp -n "$dll" dist/moq2ts-publisher/ || true; done
+          $stage = "dist\moq2ts-publisher"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item build\Release\moq2ts-publisher.exe $stage\
+          # Bundle the Qt runtime/plugins.
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --release --no-translations --compiler-runtime "$stage\moq2ts-publisher.exe"
+          # Bundle the vcpkg codec DLLs (ffmpeg/openh264/opus and their deps).
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\*.dll" $stage\ -Force
 
       - name: Zip
         shell: pwsh
