@@ -239,7 +239,11 @@ void LivePipeline::runLoop() {
             emit stats(objects, bytes);
             if (m_config.paceEgress) {
                 if (pacingStartUs < 0) {
-                    pacingStartUs = nowSteadyUs();
+                    // Anchor the pace clock so the first object is due immediately
+                    // (subtract its media time), avoiding a one-time startup wait
+                    // equal to the encode/mux buffering offset. Subsequent objects
+                    // pace relative to this anchor on the same steady clock.
+                    pacingStartUs = nowSteadyUs() - static_cast<std::int64_t>(published.mediaTimeUs);
                 }
                 while (m_running.load(std::memory_order_acquire)) {
                     const std::int64_t delay = paceDelayUs(static_cast<std::int64_t>(published.mediaTimeUs),
