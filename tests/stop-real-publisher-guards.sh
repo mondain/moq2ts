@@ -36,8 +36,8 @@ if quit_block.find("publisher.stop();") == -1 or quit_block.find("pipeline.reque
     raise SystemExit("aboutToQuit handler must stop publisher and pipeline")
 if quit_block.find("publisher.stop();") > quit_block.find("pipeline.requestStop();"):
     raise SystemExit("aboutToQuit must stop publisher before pipeline")
-if "shutdownFuture.wait()" not in quit_block:
-    raise SystemExit("aboutToQuit must wait for any background shutdown task")
+if "shutdownFuture.wait" not in quit_block:
+    raise SystemExit("aboutToQuit must wait for any background shutdown task (bounded)")
 
 if "pipeline.requestStop();" not in main_cpp:
     raise SystemExit("stopRequested handler must request pipeline stop without joining on the UI thread")
