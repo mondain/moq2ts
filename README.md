@@ -103,8 +103,12 @@ exists. Launch the packaged app with:
   does not add a private wrapper before publication.
 - **Packet size**: source packets are validated as either 188-byte TS or 192-byte
   M2TS packets, with sync byte checks required by the draft.
-- **Catalog**: the catalog uses `packaging: "m2ts"` plus `m2tsPacketSize`,
-  `m2tsPacketsPerObject`, `m2tsProgramNumber`, and `m2tsTimestampMode`.
+- **Catalog**: the media track uses `packaging: "m2ts"` with MSF common fields
+  (`isLive`, `role`, `mimeType`, `targetLatency`) and MSFTS m2ts fields
+  (`m2tsPacketSize`, `m2tsPacketsPerObject`, `m2tsProgramNumber`, optional
+  `m2tsPmtPid`/`m2tsPcrPid`, and `m2tsRandomAccess` when every group starts on a
+  random-access point). `m2tsTimestampMode` is emitted only for 192-octet
+  source packets.
 - **Initialization data**: the packetizer scans the start of the source for
   PAT and PMT packets and emits them as Base64 `initData`, preserving 188-byte
   or 192-byte source-packet form.
@@ -112,9 +116,11 @@ exists. Launch the packaged app with:
   Media objects include PAT, the selected PMT, the selected PCR PID, and the
   elementary PIDs for that program. Packets for other programs and null packets
   are dropped before publication.
-- **Timeline track**: each media track gets a `<stream>.timeline` side track
-  with `packaging: "msf-timeline"`. Timeline objects map media object
-  `mediaTimeUs` to Unix wall-clock microseconds without modifying M2TS payloads.
+- **Timeline track**: each media track gets a `<stream>.timeline` side track of
+  MSF `type: "mediatimeline"` that `depends` on the media track. Timeline objects
+  are a compact `[mediaTimeMs, [groupId, objectId], wallclockMs]` record array
+  mapping media presentation time to Unix wall-clock milliseconds without
+  modifying M2TS payloads.
 - **Encoding**: OpenH264/libav/libopus dependencies are present for in-process
   encoder work. The current live path expects a conforming multiplexed M2TS
   source and never shells out to the `ffmpeg` application.
