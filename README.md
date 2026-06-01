@@ -1,5 +1,7 @@
 # moq2ts — Cross-platform MOQ Live Publisher
 
+[![Build](https://github.com/mondain/moq2ts/actions/workflows/build.yml/badge.svg)](https://github.com/mondain/moq2ts/actions/workflows/build.yml)
+
 This repository contains a Qt-based application that publishes live media to MOQ
 using a moqxr-oriented publishing adapter.
 The media pipeline is designed around M2TS input and produces
@@ -13,6 +15,34 @@ The application targets:
 - M2TS stream ingestion for live audio/video paths
 - Cross-platform desktop UI (Qt Widgets)
 - CMake build with a Debian Bookworm Docker build entrypoint
+
+## Prebuilt binaries
+
+GitHub Actions builds Linux, macOS, and Windows packages on every push and pull
+request (see the [Build workflow](.github/workflows/build.yml)):
+
+- **Linux** — `moq2ts-publisher-linux-x86_64.AppImage` (self-contained; `chmod +x`
+  and run)
+- **macOS** — `moq2ts-publisher-macos.zip` (a bundled `.app`)
+- **Windows** — `moq2ts-publisher-windows.zip` (the `.exe` with its Qt and codec
+  DLLs)
+
+Per-commit packages are attached to each run on the Actions tab. Tagged releases
+(`v*`) additionally publish these assets to a GitHub Release.
+
+These CI binaries are **mock-publisher builds** (`MOQ2TS_BUILD_WITH_MOCK_MOQXR=ON`,
+since CI has no access to the private moqxr SDK). They include the full capture
+and transcode stack (Qt6 + ffmpeg/libav + openh264 + opus) and are intended for
+local capture, muxing, preview, and object-generation testing — they only accept
+`mock://` endpoints. To publish to a real relay, build from source against a local
+`../moqxr` checkout as described under [moqxr integration](#moqxr-integration).
+
+To cut a release, push a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Project layout
 
