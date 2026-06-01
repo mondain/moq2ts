@@ -73,3 +73,10 @@ if ! grep -q 'sendEncoderFrame(stream, frame.get(), "audio", error)' "$SOURCE"; 
   printf 'live libav capture errors should identify audio frame encoder failures\n' >&2
   exit 1
 fi
+
+# A corrupt input frame (e.g. transient MJPEG garbage at camera startup) must
+# be skipped, not abort the capture session.
+if ! grep -q 'AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)' "$SOURCE"; then
+  printf 'live libav capture should skip corrupt decode frames instead of aborting\n' >&2
+  exit 1
+fi

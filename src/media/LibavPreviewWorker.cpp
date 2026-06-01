@@ -6,6 +6,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -248,6 +249,12 @@ void emitAudioLevels(const FramePtr& frame, LibavPreviewWorker* worker) {
 bool processVideoPacket(PreviewStream* stream, AVPacket* packet, LibavPreviewWorker* worker, QString* error) {
     int rc = avcodec_send_packet(stream->decoder, packet);
     if (rc < 0) {
+        // A corrupt input frame (e.g. transient MJPEG garbage at camera
+        // startup) is not fatal: skip this packet and keep previewing,
+        // mirroring ffmpeg's tolerance. Other errors still fail.
+        if (rc == AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)) {
+            return true;
+        }
         if (error) {
             *error = QStringLiteral("Failed sending preview video packet: %1").arg(avError(rc));
         }
@@ -261,6 +268,10 @@ bool processVideoPacket(PreviewStream* stream, AVPacket* packet, LibavPreviewWor
             break;
         }
         if (rc < 0) {
+            // Skip a corrupt frame rather than ending the preview.
+            if (rc == AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)) {
+                break;
+            }
             if (error) {
                 *error = QStringLiteral("Failed decoding preview video: %1").arg(avError(rc));
             }

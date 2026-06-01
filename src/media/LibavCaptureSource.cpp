@@ -3,6 +3,7 @@
 #include "V4l2Capabilities.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <deque>
@@ -651,6 +652,12 @@ struct LibavCaptureSource::Impl {
             }
             rc = avcodec_send_packet(stream->decoder, packet.get());
             if (rc < 0) {
+                // A corrupt input frame (e.g. transient MJPEG garbage at camera
+                // startup) is not fatal: skip this packet and keep capturing,
+                // mirroring ffmpeg's tolerance. Other errors still abort.
+                if (rc == AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)) {
+                    continue;
+                }
                 if (error) {
                     *error = QStringLiteral("Failed sending packet to decoder: %1").arg(avError(rc));
                 }
@@ -663,6 +670,10 @@ struct LibavCaptureSource::Impl {
                     break;
                 }
                 if (rc < 0) {
+                    // Skip a corrupt frame rather than tearing down the session.
+                    if (rc == AVERROR_INVALIDDATA || rc == AVERROR(EINVAL)) {
+                        break;
+                    }
                     if (error) {
                         *error = QStringLiteral("Failed decoding capture frame: %1").arg(avError(rc));
                     }
