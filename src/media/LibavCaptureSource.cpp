@@ -303,14 +303,61 @@ struct LibavCaptureSource::Impl {
     bool addVideo(QString* error) {
         auto stream = std::make_unique<StreamState>();
         stream->video = true;
-        AVDictionary* options = nullptr;
-        av_dict_set(&options, "framerate", QByteArray::number(config.videoFramerate).constData(), 0);
-        av_dict_set(&options, "video_size", QStringLiteral("%1x%2").arg(config.videoWidth).arg(config.videoHeight).toUtf8().constData(), 0);
-        if (!openInput(videoInputFormatName(), videoInputName(config.cameraDeviceId), AVMEDIA_TYPE_VIDEO, stream.get(), &options, error)) {
-            av_dict_free(&options);
-            return false;
+
+        // Choose the best (node, pixel format) for the requested geometry.
+        QString chosenNode = config.cameraDeviceId;
+        bool useMjpeg = false;
+#if defined(Q_OS_LINUX)
+        {
+            const std::vector<std::string> group =
+                groupNodesForCamera(config.cameraDeviceId.toStdString());
+            std::vector<V4l2NodeModes> candidates;
+            candidates.reserve(group.size());
+            for (const std::string& n : group) {
+                candidates.push_back(V4l2NodeModes{n, queryModes(n)});
+            }
+            const V4l2Selection sel = selectBestMode(
+                candidates, config.videoWidth, config.videoHeight,
+                static_cast<double>(config.videoFramerate));
+            if (!sel.node.empty()) {
+                chosenNode = QString::fromStdString(sel.node);
+            }
+            useMjpeg = sel.useMjpeg;
+            std::fprintf(stderr,
+                         "[moqxr][capture] selected node=%s mjpeg=%d targetFps=%d negotiated=%.1f meets=%d\n",
+                         chosenNode.toUtf8().constData(), useMjpeg ? 1 : 0,
+                         config.videoFramerate, sel.negotiatedFps, sel.meetsTarget ? 1 : 0);
         }
-        av_dict_free(&options);
+#endif
+
+        const auto openWith = [&](bool mjpeg, QString* openError) -> bool {
+            AVDictionary* options = nullptr;
+            av_dict_set(&options, "framerate", QByteArray::number(config.videoFramerate).constData(), 0);
+            av_dict_set(&options, "video_size",
+                        QStringLiteral("%1x%2").arg(config.videoWidth).arg(config.videoHeight).toUtf8().constData(), 0);
+            if (mjpeg) {
+                av_dict_set(&options, "input_format", "mjpeg", 0);
+            }
+            const bool opened = openInput(videoInputFormatName(),
+                                          videoInputName(chosenNode),
+                                          AVMEDIA_TYPE_VIDEO, stream.get(), &options, openError);
+            av_dict_free(&options);
+            return opened;
+        };
+
+        QString openError;
+        if (!openWith(useMjpeg, &openError)) {
+            // If MJPEG open failed, retry once with raw before giving up.
+            if (useMjpeg && openWith(false, error)) {
+                std::fprintf(stderr, "[moqxr][capture] MJPEG open failed (%s); fell back to raw\n",
+                             openError.toUtf8().constData());
+            } else {
+                if (error && error->isEmpty()) {
+                    *error = openError;
+                }
+                return false;
+            }
+        }
 
         const AVCodec* encoder = avcodec_find_encoder_by_name("libopenh264");
         if (!encoder) {
@@ -328,15 +375,31 @@ struct LibavCaptureSource::Impl {
         stream->encoder->codec_type = AVMEDIA_TYPE_VIDEO;
         stream->encoder->width = config.videoWidth;
         stream->encoder->height = config.videoHeight;
-        stream->encoder->time_base = AVRational{1, config.videoFramerate};
-        stream->encoder->framerate = AVRational{config.videoFramerate, 1};
+        // Derive the encoder rate from what the device actually negotiated, so
+        // timestamps and GOP length match reality even when the driver could not
+        // honor the requested rate (e.g. a raw mode capped below target).
+        AVRational negRate = stream->inputStream->avg_frame_rate;
+        if (negRate.num <= 0 || negRate.den <= 0) {
+            negRate = stream->inputStream->r_frame_rate;
+        }
+        int negFps = (negRate.num > 0 && negRate.den > 0)
+                         ? std::max(1, static_cast<int>(std::lround(av_q2d(negRate))))
+                         : std::max(1, config.videoFramerate);
+        if (negFps != config.videoFramerate) {
+            std::fprintf(stderr,
+                         "[moqxr][capture] requested %d fps, capturing at %d fps\n",
+                         config.videoFramerate, negFps);
+        }
+
+        stream->encoder->time_base = AVRational{1, negFps};
+        stream->encoder->framerate = AVRational{negFps, 1};
         stream->encoder->pix_fmt = AV_PIX_FMT_YUV420P;
         stream->encoder->bit_rate = static_cast<int64_t>(config.videoTargetBitrateKbps) * 1000;
         // Bounded, closed GOP so the live stream emits periodic IDRs (every
         // keyframeIntervalMs). Without this the encoder uses an effectively long
         // default GOP, no random-access points appear after the first frame, and
         // MOQT grouping degenerates to a single group.
-        const int frameRate = std::max(1, config.videoFramerate);
+        const int frameRate = std::max(1, negFps);
         int gopSize = static_cast<int>(
             (static_cast<long long>(frameRate) * std::max(1, config.keyframeIntervalMs) + 500) / 1000);
         gopSize = std::max(1, gopSize);
