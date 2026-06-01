@@ -139,6 +139,7 @@ set(SOURCES
     src/app/PreviewPanel.cpp
     src/media/LivePipeline.cpp
     src/media/LibavCaptureSource.cpp
+    src/media/V4l2Capabilities.cpp
     src/media/LibavPreviewWorker.cpp
     src/media/M2tsPacketizer.cpp
     src/media/MsftsMuxer.cpp
@@ -156,6 +157,7 @@ set(HEADERS
     src/app/PublishConfig.h
     src/media/LivePipeline.h
     src/media/LibavCaptureSource.h
+    src/media/V4l2Capabilities.h
     src/media/LibavPreviewWorker.h
     src/media/M2tsPacketizer.h
     src/media/MsftsMuxer.h
@@ -240,3 +242,14 @@ install(TARGETS moq2ts-publisher
 # ----------------
 # Optional CLI target intentionally omitted until a standalone CLI entrypoint file
 # is added (kept as a placeholder for future expansion).
+
+# Pure V4L2 mode-selection logic test (Linux only; no Qt/libav deps).
+if(UNIX AND NOT APPLE)
+    enable_testing()
+    add_executable(moq2ts-v4l2-selection-tests
+        tests/v4l2_selection_test.cpp
+        src/media/V4l2Capabilities.cpp
+    )
+    target_include_directories(moq2ts-v4l2-selection-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME moq2ts-v4l2-selection-tests COMMAND moq2ts-v4l2-selection-tests)
+endif()
