@@ -215,6 +215,14 @@ MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
     QObject::connect(stopButton, &QPushButton::clicked, this, &MainWindow::handleStop);
     QObject::connect(cameraSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updatePreviewConfig);
     QObject::connect(microphoneSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updatePreviewConfig);
+    QObject::connect(cameraSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        const bool hasDevice = !cameraSourceCombo->currentData().toString().isEmpty();
+        logSourceSelection(QStringLiteral("Camera"), hasDevice ? cameraSourceCombo->currentText() : QStringLiteral("none"));
+    });
+    QObject::connect(microphoneSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        const bool hasDevice = !microphoneSourceCombo->currentData().toString().isEmpty();
+        logSourceSelection(QStringLiteral("Microphone"), hasDevice ? microphoneSourceCombo->currentText() : QStringLiteral("none"));
+    });
     QObject::connect(widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
     QObject::connect(heightSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
     QObject::connect(fpsSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updatePreviewConfig);
@@ -269,6 +277,7 @@ void MainWindow::selectVideoSource() {
     const QString filePath = QFileDialog::getOpenFileName(this, "Select video M2TS source", QString(), "M2TS files (*.ts *.m2ts);;All files (*.*)");
     if (!filePath.isEmpty()) {
         videoSourceEdit->setText(filePath);
+        logSourceSelection(QStringLiteral("Video file"), filePath);
     }
 }
 
@@ -276,7 +285,13 @@ void MainWindow::selectAudioSource() {
     const QString filePath = QFileDialog::getOpenFileName(this, "Select audio M2TS source", QString(), "M2TS files (*.ts *.m2ts);;All files (*.*)");
     if (!filePath.isEmpty()) {
         audioSourceEdit->setText(filePath);
+        logSourceSelection(QStringLiteral("Audio file"), filePath);
     }
+}
+
+void MainWindow::logSourceSelection(const QString& label, const QString& value) {
+    logBrowser->append(QString("%1 | %2 selected: %3")
+        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), label, value));
 }
 
 void MainWindow::refreshCaptureDevices() {
@@ -428,6 +443,13 @@ void MainWindow::handleStart() {
     resetStats();
     statusLabel->setText("Connecting...");
     logBrowser->append(QString("%1 | Publishing started for namespace %2").arg(QDateTime::currentDateTime().toString(Qt::ISODate), cfg.namespaceName));
+
+    const QString cameraLabel = cfg.cameraDeviceId.isEmpty() ? QStringLiteral("none") : cameraSourceCombo->currentText();
+    const QString micLabel = cfg.microphoneDeviceId.isEmpty() ? QStringLiteral("none") : microphoneSourceCombo->currentText();
+    const QString videoFileLabel = cfg.videoSource.isEmpty() ? QStringLiteral("none") : cfg.videoSource;
+    const QString audioFileLabel = cfg.audioSource.isEmpty() ? QStringLiteral("none") : cfg.audioSource;
+    logBrowser->append(QString("%1 | Sources - camera: %2 | microphone: %3 | video file: %4 | audio file: %5")
+        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), cameraLabel, micLabel, videoFileLabel, audioFileLabel));
 
     emit startRequested(cfg);
 }

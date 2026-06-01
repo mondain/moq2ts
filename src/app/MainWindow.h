@@ -63,6 +63,7 @@ private:
     void savePreferences() const;
     void updatePreviewConfig();
     void resetStats();
+    void logSourceSelection(const QString& label, const QString& value);
 
 private:
     QTabWidget* tabs = nullptr;
