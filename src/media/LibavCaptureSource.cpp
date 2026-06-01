@@ -192,13 +192,6 @@ struct LibavCaptureSource::Impl {
     // order by readObject. Front entry is the next pending boundary.
     std::deque<std::uint64_t> groupBoundaries;
     std::uint64_t muxedConsumed = 0;
-    // Absolute offset up to which muxedBytes has been scanned for random-access
-    // points. Boundaries are detected by scanning landed bytes, not at encode
-    // time, so they are exact regardless of A/V interleaving.
-    std::uint64_t scannedTo = 0;
-    // TS PID carrying the video elementary stream, assigned by the muxer at
-    // write-header time; -1 until known (falls back to pcrPidValue in the scan).
-    int videoPidValue = -1;
     std::uint64_t nextGroupId = 0;
     bool sawVideoKeyframe = false;
     bool hasVideoStream = false;
@@ -313,13 +306,6 @@ struct LibavCaptureSource::Impl {
             return false;
         }
         headerWritten = true;
-
-        for (const auto& s : streams) {
-            if (s->video && s->outputStream) {
-                videoPidValue = s->outputStream->id;
-                break;
-            }
-        }
 
         extractInitData(muxedBytes, &initDataBytes, &pmtPidValue, &pcrPidValue);
         pumpUntilInitData();
@@ -639,67 +625,7 @@ struct LibavCaptureSource::Impl {
                 }
             }
         }
-        scanForRapBoundaries();
         return true;
-    }
-
-    // Scans newly-landed, packet-aligned TS bytes for video random-access points
-    // and records each (except the first, which group 0 already contains) as a
-    // group boundary at its exact absolute byte offset.
-    void scanForRapBoundaries() {
-        const int videoPid = videoPidValue >= 0 ? videoPidValue : pcrPidValue;
-        if (videoPid < 0) {
-            return;
-        }
-        const std::uint64_t producedEnd = muxedConsumed + static_cast<std::uint64_t>(muxedBytes.size());
-        std::uint64_t pos = std::max(scannedTo, muxedConsumed);
-        // Align pos to a packet boundary relative to the current buffer start.
-        const std::uint64_t bufBase = muxedConsumed;
-        if (pos > bufBase) {
-            const std::uint64_t rel = pos - bufBase;
-            pos = bufBase + (rel / 188) * 188;
-        }
-        const char* data = muxedBytes.constData();
-        for (; pos + 188 <= producedEnd; pos += 188) {
-            const qsizetype idx = static_cast<qsizetype>(pos - bufBase);
-            const unsigned char* pkt = reinterpret_cast<const unsigned char*>(data + idx);
-            if (pkt[0] != 0x47) {
-                continue;  // not packet-aligned / corrupt; skip this 188 window
-            }
-            const int pid = ((pkt[1] & 0x1f) << 8) | pkt[2];
-            if (pid != videoPid) {
-                continue;
-            }
-            const bool pusi = (pkt[1] & 0x40) != 0;
-            const int adaptation = (pkt[3] >> 4) & 0x3;  // 2 or 3 => adaptation present
-            if (!pusi || (adaptation != 2 && adaptation != 3)) {
-                continue;
-            }
-            const int adaptationLen = pkt[4];
-            if (adaptationLen <= 0) {
-                continue;
-            }
-            const bool randomAccess = (pkt[5] & 0x40) != 0;  // random_access_indicator
-            if (!randomAccess) {
-                continue;
-            }
-            if (!sawVideoKeyframe) {
-                // First RAP: group 0 starts at byte 0 and contains it; do not push.
-                sawVideoKeyframe = true;
-                std::fprintf(stderr, "[moqxr][diag] RAP scan: videoPid=%d pcrPid=%d\n",
-                             videoPid, pcrPidValue);
-            } else {
-                groupBoundaries.push_back(pos);
-                ++rapBoundaryCount;
-                if (rapBoundaryCount % 30 == 1) {
-                    std::fprintf(stderr,
-                                 "[moqxr][diag] RAP boundaries=%llu latest offset=%llu\n",
-                                 (unsigned long long)rapBoundaryCount,
-                                 (unsigned long long)pos);
-                }
-            }
-        }
-        scannedTo = pos > scannedTo ? pos : scannedTo;
     }
 
     bool sendEncoderFrame(StreamState* stream, AVFrame* frame, const char* streamKind, QString* error) {
@@ -724,6 +650,30 @@ struct LibavCaptureSource::Impl {
             }
             av_packet_rescale_ts(packet.get(), stream->encoder->time_base, stream->outputStream->time_base);
             packet->stream_index = stream->outputStream->index;
+            // Use the encoder's authoritative keyframe flag to mark MOQT group
+            // boundaries. Flush the interleaver first so all previously queued
+            // packets land in muxedBytes; the byte offset is then the exact start
+            // of this keyframe's TS packets (group-aligned random access).
+            const bool isVideoKey = stream->video && (packet->flags & AV_PKT_FLAG_KEY) != 0;
+            if (isVideoKey) {
+                av_interleaved_write_frame(outputFormat, nullptr);
+                const std::uint64_t offset = muxedConsumed + static_cast<std::uint64_t>(muxedBytes.size());
+                if (!sawVideoKeyframe) {
+                    // First IDR: group 0 starts at byte 0 and contains it; no push.
+                    sawVideoKeyframe = true;
+                    std::fprintf(stderr, "[moqxr][diag] keyframe groups: first IDR at offset=%llu\n",
+                                 (unsigned long long)offset);
+                } else {
+                    groupBoundaries.push_back(offset);
+                    ++rapBoundaryCount;
+                    if (rapBoundaryCount % 30 == 1) {
+                        std::fprintf(stderr,
+                                     "[moqxr][diag] keyframe boundaries=%llu latest offset=%llu\n",
+                                     (unsigned long long)rapBoundaryCount,
+                                     (unsigned long long)offset);
+                    }
+                }
+            }
             rc = av_interleaved_write_frame(outputFormat, packet.get());
             if (rc < 0) {
                 if (error) {
