@@ -122,7 +122,11 @@ exists. Launch the packaged app with:
   libavdevice/platform capture APIs, with Qt Multimedia fallback where enabled.
   If no file/pipe source is provided, selected devices are opened through
   libavdevice, encoded in-process, muxed to MPEG-TS through libavformat, and
-  published as MSFTS M2TS objects.
+  published as MSFTS M2TS objects. On Linux the capture path probes the camera's
+  V4L2 modes and prefers an MJPEG mode at the requested resolution/framerate
+  (so e.g. 1080p30 is honored where raw YUYV would be capped), reconciling the
+  encoder to the framerate the driver actually negotiates. Transient corrupt
+  decode frames are skipped rather than aborting capture.
 - **Preview**: the Preview tab can open selected camera/microphone devices before
   publishing. During live capture publishing, the Preview tab is driven from the
   same decoded frames and audio samples used by the encoder path. Audio meters

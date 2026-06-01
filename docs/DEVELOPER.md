@@ -37,6 +37,25 @@ media publishing. It currently provides:
 - `LibavCaptureSource` opens selected devices through libavdevice, transcodes
   to H.264 plus AAC/Opus, muxes MPEG-TS into an in-memory AVIO sink, extracts
   PAT/PMT as `initData`, and emits 188-byte TS packet objects.
+- On Linux/V4L2, `LibavCaptureSource` probes the selected camera's device nodes
+  (`V4l2Capabilities`) and prefers an MJPEG mode that meets the requested
+  width/height/fps, opening it with `input_format=mjpeg`; it falls back to raw
+  once if the MJPEG open fails. The encoder rate and GOP are reconciled to the
+  framerate the driver actually negotiates, so timestamps and IDR spacing match
+  reality even when a camera cannot honor the requested rate. See the
+  "Camera capture (V4L2)" section below.
+- The decode loop tolerates a corrupt input frame (e.g. transient MJPEG garbage
+  some cameras emit at startup): an `AVERROR_INVALIDDATA`/`EINVAL` from
+  `avcodec_send_packet`/`avcodec_receive_frame` skips that packet and continues,
+  mirroring ffmpeg; other decode errors still abort the session.
+- Video frames are scaled to the encoder's `YUV420P` with the swscale color
+  range set explicitly (MJPEG sources are full-range `yuvj*`; the encode target
+  is limited-range), and the same `applyScalerRange` handling drives the
+  full-range BGRA preview conversion.
+- Encoded video keyframes (`AV_PKT_FLAG_KEY`) mark MOQT group boundaries: the
+  muxer interleaver is flushed at each IDR so the byte offset is the exact start
+  of the keyframe's TS packets, making each MOQT group start on a random-access
+  point. The GOP is bounded by `keyframeIntervalMs` so IDRs recur periodically.
 - `M2tsPacketizer` scans PAT/PMT, selects one program, and filters media
   objects to PAT, selected PMT, selected PCR PID, and that program's elementary
   PIDs. Packets from other programs and null packets are not published.
@@ -86,7 +105,21 @@ media publishing. It currently provides:
   - Preflight capture preview worker.
   - Opens selected libavdevice camera/microphone inputs without starting a
     publisher session.
+  - Selects the same V4L2 node/pixel format as the publish path via
+    `resolveCaptureOpen`, so the preview opens the broadcast-rate MJPEG node
+    rather than a raw lower-rate node.
   - Emits decoded video frames and left/right audio levels to `PreviewPanel`.
+
+- `src/media/V4l2Capabilities.*` (Linux only)
+  - Pure `selectBestMode(modes, w, h, fps)` chooses the best `(node, format)`:
+    prefers an MJPEG mode meeting the target, then raw meeting the target, then
+    best-effort highest fps at the requested size. Unit-tested in
+    `tests/v4l2_selection_test.cpp` (no device required).
+  - `queryModes(node)` enumerates a node's discrete modes via V4L2 ioctls;
+    `groupNodesForCamera(node)` groups capture nodes that share a sysfs USB
+    parent (one physical camera can expose several `/dev/videoN` nodes).
+  - `resolveCaptureOpen(cameraDeviceId, w, h, fps)` composes those into the
+    single `{node, useMjpeg}` decision shared by capture and preview.
 
 - `src/media/MsftsMuxer.*`
   - Generates a compact MSF catalog for the `m2ts` packaging value.
@@ -147,7 +180,12 @@ Suggested mapping:
 
 - `connect(cfg)` -> store endpoint, namespace, and stream settings
 - `publishLiveObjects(...)` -> call `openmoq::publisher::Publisher::publish_live_objects`
-- `stop()` -> close session and flush buffers
+- `stop()` -> `disconnect(0)` -> `MoqtSession::close(0)`, which sets an atomic
+  stop flag the publish loop observes so a running publish winds down promptly
+  (with a bounded graceful flush) instead of blocking. `LivePipeline` waits for
+  its worker with a bounded join plus a detach fallback, and the GUI-thread
+  teardown is bounded, so pressing Stop never freezes the UI. (Implemented in
+  the sibling `../moqxr` `MoqtSession` plus `LivePipeline`/`main.cpp` here.)
 
 The real-linked path is compiled only when `MOQ2TS_BUILD_WITH_MOCK_MOQXR=OFF`.
 With the default mock build, `MoqxrPublisher::connect()` accepts only
