@@ -1,5 +1,7 @@
 #include "LibavCaptureSource.h"
 
+#include "V4l2Capabilities.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -11,6 +13,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QSet>
 #include <QtGlobal>
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
@@ -100,25 +103,6 @@ QString audioInputName(const QString& deviceId) {
     return QStringLiteral(":%1").arg(deviceId);
 #else
     return deviceId;
-#endif
-}
-
-bool isPrimaryV4l2Device(const QString& deviceName) {
-#if defined(Q_OS_LINUX)
-    if (!deviceName.startsWith(QStringLiteral("/dev/video"))) {
-        return true;
-    }
-
-    const QString nodeName = QFileInfo(deviceName).fileName();
-    QFile indexFile(QStringLiteral("/sys/class/video4linux/%1/index").arg(nodeName));
-    if (!indexFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return true;
-    }
-
-    return QString::fromUtf8(indexFile.readAll()).trimmed() == QStringLiteral("0");
-#else
-    Q_UNUSED(deviceName);
-    return true;
 #endif
 }
 
@@ -980,12 +964,40 @@ QList<CaptureDevice> LibavCaptureSource::enumerateVideoInputs() {
     if (avdevice_list_input_sources(format, nullptr, nullptr, &list) < 0 || !list) {
         return devices;
     }
+    QSet<QString> claimedNodes;  // nodes already folded into a camera group
     for (int i = 0; i < list->nb_devices; ++i) {
         AVDeviceInfo* info = list->devices[i];
         if (!info) continue;
         if (!info->device_name || !*info->device_name) continue;
         const QString deviceName = QString::fromUtf8(info->device_name);
-        if (!isPrimaryV4l2Device(deviceName)) continue;
+
+#if defined(Q_OS_LINUX)
+        if (claimedNodes.contains(deviceName)) {
+            continue;  // already represented by an earlier camera group
+        }
+        // Group all capture nodes for this physical camera; keep only those
+        // that actually report capture modes (drops metadata-only nodes).
+        const std::vector<std::string> group =
+            groupNodesForCamera(deviceName.toStdString());
+        QStringList capable;
+        for (const std::string& n : group) {
+            const QString qn = QString::fromStdString(n);
+            claimedNodes.insert(qn);
+            if (!queryModes(n).empty()) {
+                capable.append(qn);
+            }
+        }
+        if (capable.isEmpty()) {
+            continue;  // no usable capture node in this group
+        }
+        capable.sort();
+        CaptureDevice d;
+        d.id = capable.first();                  // stable anchor for QSettings
+        d.description = QString::fromUtf8(info->device_description
+                                          ? info->device_description : info->device_name);
+        d.candidateNodes = capable;
+        devices.append(d);
+#else
         bool isVideo = false;
         for (int k = 0; k < info->nb_media_types; ++k) {
             if (info->media_types[k] == AVMEDIA_TYPE_VIDEO) { isVideo = true; break; }
@@ -996,8 +1008,11 @@ QList<CaptureDevice> LibavCaptureSource::enumerateVideoInputs() {
         if (!isVideo) continue;
         CaptureDevice d;
         d.id = deviceName;
-        d.description = QString::fromUtf8(info->device_description ? info->device_description : info->device_name);
+        d.description = QString::fromUtf8(info->device_description
+                                          ? info->device_description : info->device_name);
+        d.candidateNodes = QStringList{deviceName};
         devices.append(d);
+#endif
     }
     avdevice_free_list_devices(&list);
 #endif

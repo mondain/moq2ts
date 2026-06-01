@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <atomic>
 #include <cstdint>
@@ -16,8 +17,9 @@
 namespace moq2ts {
 
 struct CaptureDevice {
-    QString id;
+    QString id;                 // stable node for settings persistence
     QString description;
+    QStringList candidateNodes; // all capture nodes for this physical camera
 };
 
 class LibavCaptureSource final {

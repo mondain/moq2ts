@@ -73,6 +73,11 @@ static QList<CaptureDevice> enumerate(AVMediaType mediaType) {
         entry.id = QString::number(index);
         NSString* name = dev.localizedName ?: dev.uniqueID;
         entry.description = QString::fromNSString(name);
+        if (mediaType == AVMediaTypeVideo) {
+            // Downstream code expects a non-empty candidate list for video; the
+            // macOS path has a single node per device (its avfoundation index).
+            entry.candidateNodes = QStringList{entry.id};
+        }
         devices.append(entry);
         ++index;
     }
