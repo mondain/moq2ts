@@ -17,6 +17,9 @@ struct M2tsObject {
     // True when this object is the first of a new MOQT group (begins at a
     // random-access point). Always false for the file-source path.
     bool startsGroup = false;
+    // Media time (microseconds, capture-epoch relative) of the most recent video
+    // frame whose bytes are in this object. 0 for the file-source path.
+    std::uint64_t mediaTimeUs = 0;
 };
 
 class M2tsPacketizer final {

@@ -678,6 +678,16 @@ struct LibavCaptureSource::Impl {
         muxedBytes.remove(0, alignedBytes);
         muxedConsumed += static_cast<std::uint64_t>(alignedBytes);
 
+        // Advance the offset->mediaUs map to this object's end, remembering the
+        // media time of the last video packet at or before it, and tag the
+        // object so the pipeline can pace its release on real media time.
+        const std::uint64_t mediaEnd = muxedConsumed;
+        while (!offsetMediaUs.empty() && offsetMediaUs.front().first <= mediaEnd) {
+            lastVideoMediaUs = offsetMediaUs.front().second;
+            offsetMediaUs.pop_front();
+        }
+        object->mediaTimeUs = lastVideoMediaUs;
+
         // A new group begins when this object starts exactly on a recorded
         // boundary, or for the very first object overall.
         bool startGroup = (nextObjectId == 0);
@@ -810,6 +820,22 @@ struct LibavCaptureSource::Impl {
                                      (unsigned long long)rapBoundaryCount,
                                      (unsigned long long)offset);
                     }
+                }
+            }
+            // Record this video packet's media time against the current muxed
+            // byte offset so readObject can tag objects with a real media time
+            // for egress pacing. Kept monotonic in both offset and media time.
+            if (stream->video) {
+                const std::uint64_t voffset = muxedConsumed + static_cast<std::uint64_t>(muxedBytes.size());
+                std::uint64_t vmediaUs = offsetMediaUs.empty() ? 0 : offsetMediaUs.back().second;
+                if (packet->pts != AV_NOPTS_VALUE) {
+                    const std::int64_t us = av_rescale_q(packet->pts, stream->outputStream->time_base, AVRational{1, 1000000});
+                    if (us > 0 && static_cast<std::uint64_t>(us) > vmediaUs) {
+                        vmediaUs = static_cast<std::uint64_t>(us);
+                    }
+                }
+                if (offsetMediaUs.empty() || voffset >= offsetMediaUs.back().first) {
+                    offsetMediaUs.emplace_back(voffset, vmediaUs);
                 }
             }
             rc = av_interleaved_write_frame(outputFormat, packet.get());
