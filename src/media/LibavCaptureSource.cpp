@@ -151,7 +151,7 @@ QString audioInputName(const QString& deviceId) {
 #endif
 }
 
-int writePacket(void* opaque, uint8_t* buffer, int bufferSize) {
+int writePacket(void* opaque, const uint8_t* buffer, int bufferSize) {
     auto* output = static_cast<QByteArray*>(opaque);
     output->append(reinterpret_cast<const char*>(buffer), bufferSize);
     return bufferSize;
@@ -858,7 +858,7 @@ struct LibavCaptureSource::Impl {
         }
         QImage image(frame->width, frame->height, QImage::Format_ARGB32);
         uint8_t* dstData[4] = {image.bits(), nullptr, nullptr, nullptr};
-        int dstLinesize[4] = {image.bytesPerLine(), 0, 0, 0};
+        int dstLinesize[4] = {static_cast<int>(image.bytesPerLine()), 0, 0, 0};
         stream->previewSws = sws_getCachedContext(stream->previewSws,
                                                   frame->width,
                                                   frame->height,

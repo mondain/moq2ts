@@ -324,7 +324,7 @@ bool processVideoPacket(PreviewStream* stream, AVPacket* packet, LibavPreviewWor
 
         QImage image(frame->width, frame->height, QImage::Format_ARGB32);
         uint8_t* dstData[4] = {image.bits(), nullptr, nullptr, nullptr};
-        int dstLinesize[4] = {image.bytesPerLine(), 0, 0, 0};
+        int dstLinesize[4] = {static_cast<int>(image.bytesPerLine()), 0, 0, 0};
         stream->sws = sws_getCachedContext(stream->sws,
                                            frame->width,
                                            frame->height,
