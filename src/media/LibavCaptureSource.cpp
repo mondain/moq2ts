@@ -233,7 +233,8 @@ struct LibavCaptureSource::Impl {
     // by the first encoded frame of either stream (CAS, set-once).
     std::atomic<std::int64_t> captureEpochUs{-1};
     // Ascending (muxedByteOffset, videoMediaUs) pairs: media time of the latest
-    // video packet whose bytes end at/before each offset. Consumed by readObject.
+    // video packet whose bytes begin at/before each offset (offset is the
+    // packet's start, recorded before it is written). Consumed by readObject.
     std::deque<std::pair<std::uint64_t, std::uint64_t>> offsetMediaUs;
     // Carries the media time of the last video packet consumed by readObject so
     // an object with no new video bytes reuses the last known media time.
@@ -252,6 +253,7 @@ struct LibavCaptureSource::Impl {
         SwrContext* swr = nullptr;
         int64_t nextAudioPts = 0;
         bool audioAnchored = false;
+        int64_t lastVideoPts = AV_NOPTS_VALUE;
         int inputStreamIndex = -1;
         bool audio = false;
         bool video = false;
@@ -822,9 +824,10 @@ struct LibavCaptureSource::Impl {
                     }
                 }
             }
-            // Record this video packet's media time against the current muxed
-            // byte offset so readObject can tag objects with a real media time
-            // for egress pacing. Kept monotonic in both offset and media time.
+            // Record this video packet's media time against its start byte
+            // offset (recorded before the packet is written) so readObject can
+            // tag objects with a real media time for egress pacing. Kept
+            // monotonic in both offset and media time.
             if (stream->video) {
                 const std::uint64_t voffset = muxedConsumed + static_cast<std::uint64_t>(muxedBytes.size());
                 std::uint64_t vmediaUs = offsetMediaUs.empty() ? 0 : offsetMediaUs.back().second;
@@ -1107,7 +1110,15 @@ struct LibavCaptureSource::Impl {
         // control works (the old raw best_effort_timestamp flooded the encoder).
         ensureCaptureEpoch();
         const std::int64_t mediaUs = nowSteadyUs() - captureEpochUs.load(std::memory_order_acquire);
-        frame->pts = av_rescale_q(mediaUs, AVRational{1, 1000000}, stream->encoder->time_base);
+        int64_t pts = av_rescale_q(mediaUs, AVRational{1, 1000000}, stream->encoder->time_base);
+        // Force strictly increasing PTS: wall-clock rebasing can collapse two
+        // frames to the same encoder-timebase tick, which libx264 and the mpegts
+        // muxer reject.
+        if (stream->lastVideoPts != AV_NOPTS_VALUE && pts <= stream->lastVideoPts) {
+            pts = stream->lastVideoPts + 1;
+        }
+        stream->lastVideoPts = pts;
+        frame->pts = pts;
         return sendEncoderFrame(stream, frame.get(), "video", error);
     }
 #else
