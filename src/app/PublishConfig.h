@@ -23,6 +23,7 @@ struct PublishConfig {
     int videoFramerate = 30;
     int videoTargetBitrateKbps = 2500;
     int keyframeIntervalMs = 1000;  // live H.264 IDR cadence; MOQT group cadence follows it
+    bool paceEgress = true; // pace capture object release on real media time
 
     int audioSampleRate = 48000;
     int audioChannels = 2;

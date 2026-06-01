@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <thread>
 #include <QDateTime>
 #include <QDebug>
 #include <QJsonArray>
@@ -10,6 +11,7 @@
 #include <QJsonObject>
 #include <QThread>
 
+#include "EgressPacing.h"
 #include "LibavCaptureSource.h"
 #include "MsftsMuxer.h"
 
@@ -21,6 +23,10 @@ std::uint64_t nowUnixUs() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now).count());
 }
+
+// Latency slack (us) before an object is considered due. Small so steady-state
+// latency stays near zero; only objects arriving ahead of their media time wait.
+constexpr std::int64_t kPaceSlackUs = 8000;
 
 // Builds an MSF media timeline payload (draft-ietf-moq-msf-00 Section 7.1): a
 // JSON array of records, each a three-item array
@@ -184,9 +190,10 @@ void LivePipeline::runLoop() {
         int64_t objects = 0;
         int64_t bytes = 0;
         std::uint64_t timelineObjectId = 0;
+        std::int64_t pacingStartUs = -1;
         std::optional<PublishedObject> pendingTimeline;
         const int timelineEveryObjects = std::max(1, 1000 / std::max(1, m_config.fragmentDurationMs));
-        auto nextObject = [this, &capture, packetsPerObject, trackName, timelineTrackName, timelineEveryObjects, &objects, &bytes, &timelineObjectId, &pendingTimeline]() -> std::optional<PublishedObject> {
+        auto nextObject = [this, &capture, packetsPerObject, trackName, timelineTrackName, timelineEveryObjects, &objects, &bytes, &timelineObjectId, &pacingStartUs, &pendingTimeline]() -> std::optional<PublishedObject> {
             if (!m_running.load(std::memory_order_acquire)) {
                 return std::nullopt;
             }
@@ -212,7 +219,7 @@ void LivePipeline::runLoop() {
             published.payload = std::move(object.payload);
             published.groupId = object.groupId;
             published.objectId = object.objectId;
-            published.mediaTimeUs = static_cast<std::uint64_t>(objects) * static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
+            published.mediaTimeUs = object.mediaTimeUs;
             published.mediaDurationUs = static_cast<std::uint64_t>(m_config.fragmentDurationMs) * 1000ULL;
             if (startsGroup || (objects % timelineEveryObjects) == 0) {
                 PublishedObject timeline;
@@ -230,6 +237,19 @@ void LivePipeline::runLoop() {
             ++objects;
             bytes += published.payload.size();
             emit stats(objects, bytes);
+            if (m_config.paceEgress) {
+                if (pacingStartUs < 0) {
+                    pacingStartUs = nowSteadyUs();
+                }
+                while (m_running.load(std::memory_order_acquire)) {
+                    const std::int64_t delay = paceDelayUs(static_cast<std::int64_t>(published.mediaTimeUs),
+                                                           nowSteadyUs() - pacingStartUs, kPaceSlackUs);
+                    if (delay <= 0) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::microseconds(std::min<std::int64_t>(delay, 5000)));
+                }
+            }
             return published;
         };
 
