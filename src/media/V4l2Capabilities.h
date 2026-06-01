@@ -44,12 +44,25 @@ constexpr std::uint32_t kV4l2PixFmtMjpeg =
 V4l2Selection selectBestMode(const std::vector<V4l2NodeModes>& candidates,
                              int reqWidth, int reqHeight, double reqFps);
 
+// Result of choosing how to open a camera: which node, and whether to request
+// the MJPEG input format. POD; usable on all platforms (only resolveCaptureOpen
+// below is Linux-only).
+struct CaptureOpen {
+    std::string node;       // device node to open
+    bool useMjpeg = false;  // true -> set input_format=mjpeg
+};
+
 #if defined(__linux__)
 // Query the discrete modes a node supports (ioctls). Empty on any failure.
 std::vector<V4l2Mode> queryModes(const std::string& devNode);
 // All capture nodes belonging to the same physical camera as `node`
 // (shared sysfs USB parent). Returns {node} if grouping cannot be resolved.
 std::vector<std::string> groupNodesForCamera(const std::string& node);
+// Probe the physical camera that owns `cameraDeviceId` and choose the best
+// (node, pixel format) for the requested geometry. Never fails: returns
+// {cameraDeviceId, false} when probing yields nothing.
+CaptureOpen resolveCaptureOpen(const std::string& cameraDeviceId,
+                               int reqWidth, int reqHeight, double reqFps);
 #endif
 
 }  // namespace moq2ts

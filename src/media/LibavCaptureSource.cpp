@@ -309,24 +309,14 @@ struct LibavCaptureSource::Impl {
         bool useMjpeg = false;
 #if defined(Q_OS_LINUX)
         {
-            const std::vector<std::string> group =
-                groupNodesForCamera(config.cameraDeviceId.toStdString());
-            std::vector<V4l2NodeModes> candidates;
-            candidates.reserve(group.size());
-            for (const std::string& n : group) {
-                candidates.push_back(V4l2NodeModes{n, queryModes(n)});
-            }
-            const V4l2Selection sel = selectBestMode(
-                candidates, config.videoWidth, config.videoHeight,
+            const CaptureOpen co = resolveCaptureOpen(
+                config.cameraDeviceId.toStdString(),
+                config.videoWidth, config.videoHeight,
                 static_cast<double>(config.videoFramerate));
-            if (!sel.node.empty()) {
-                chosenNode = QString::fromStdString(sel.node);
-            }
-            useMjpeg = sel.useMjpeg;
-            std::fprintf(stderr,
-                         "[moqxr][capture] selected node=%s mjpeg=%d targetFps=%d negotiated=%.1f meets=%d\n",
-                         chosenNode.toUtf8().constData(), useMjpeg ? 1 : 0,
-                         config.videoFramerate, sel.negotiatedFps, sel.meetsTarget ? 1 : 0);
+            chosenNode = QString::fromStdString(co.node);
+            useMjpeg = co.useMjpeg;
+            std::fprintf(stderr, "[moqxr][capture] selected node=%s mjpeg=%d targetFps=%d\n",
+                         chosenNode.toUtf8().constData(), useMjpeg ? 1 : 0, config.videoFramerate);
         }
 #endif
 

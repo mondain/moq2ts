@@ -163,6 +163,21 @@ std::vector<std::string> groupNodesForCamera(const std::string& node) {
     return group;
 }
 
+CaptureOpen resolveCaptureOpen(const std::string& cameraDeviceId,
+                               int reqWidth, int reqHeight, double reqFps) {
+    const std::vector<std::string> group = groupNodesForCamera(cameraDeviceId);
+    std::vector<V4l2NodeModes> candidates;
+    candidates.reserve(group.size());
+    for (const std::string& n : group) {
+        candidates.push_back(V4l2NodeModes{n, queryModes(n)});
+    }
+    const V4l2Selection sel = selectBestMode(candidates, reqWidth, reqHeight, reqFps);
+    CaptureOpen out;
+    out.node = sel.node.empty() ? cameraDeviceId : sel.node;
+    out.useMjpeg = sel.useMjpeg;
+    return out;
+}
+
 #endif  // __linux__
 
 }  // namespace moq2ts
