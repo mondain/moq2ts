@@ -10,8 +10,6 @@
 #include <memory>
 #include <vector>
 
-#include <QFile>
-#include <QFileInfo>
 #include <QImage>
 #include <QSet>
 #include <QtGlobal>

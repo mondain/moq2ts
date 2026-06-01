@@ -33,13 +33,19 @@ if ! grep -q 'if (!info->device_name || !\*info->device_name) continue;' "$SOURC
   exit 1
 fi
 
-if ! grep -q '/sys/class/video4linux' "$SOURCE"; then
-  printf 'libav capture enumeration should filter duplicate V4L2 companion devices by sysfs index\n' >&2
+if ! grep -q 'groupNodesForCamera' "$SOURCE"; then
+  printf 'libav capture enumeration should group V4L2 nodes per physical camera\n' >&2
   exit 1
 fi
 
-if ! grep -q 'isPrimaryV4l2Device' "$SOURCE"; then
-  printf 'libav capture enumeration should use a V4L2 primary-device helper\n' >&2
+if ! grep -q 'candidateNodes' "$SOURCE"; then
+  printf 'libav capture enumeration should record per-camera candidate nodes\n' >&2
+  exit 1
+fi
+
+CAPS="$REPO_ROOT/src/media/V4l2Capabilities.cpp"
+if ! grep -q '/sys/class/video4linux' "$CAPS"; then
+  printf 'V4L2 node grouping should resolve cameras via sysfs\n' >&2
   exit 1
 fi
 
