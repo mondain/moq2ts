@@ -2,13 +2,17 @@
 
 #include "V4l2Capabilities.h"
 
+#include "EgressPacing.h"
+
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <QImage>
@@ -224,6 +228,17 @@ struct LibavCaptureSource::Impl {
     std::uint64_t pendingGroupBoundary = 0;  // absolute offset of the next group start, or 0 if none
     std::uint64_t rapBoundaryCount = 0;  // diagnostic: number of RAP boundaries recorded
 
+    // Single capture epoch (steady-clock microseconds) shared by video and audio
+    // so both PES streams and the mpegts PCR sit on one timeline. -1 until set
+    // by the first encoded frame of either stream (CAS, set-once).
+    std::atomic<std::int64_t> captureEpochUs{-1};
+    // Ascending (muxedByteOffset, videoMediaUs) pairs: media time of the latest
+    // video packet whose bytes end at/before each offset. Consumed by readObject.
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> offsetMediaUs;
+    // Carries the media time of the last video packet consumed by readObject so
+    // an object with no new video bytes reuses the last known media time.
+    std::uint64_t lastVideoMediaUs = 0;
+
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
     struct StreamState {
         AVFormatContext* inputFormat = nullptr;
@@ -236,6 +251,7 @@ struct LibavCaptureSource::Impl {
         SwsContext* previewSws = nullptr;
         SwrContext* swr = nullptr;
         int64_t nextAudioPts = 0;
+        bool audioAnchored = false;
         int inputStreamIndex = -1;
         bool audio = false;
         bool video = false;
@@ -608,6 +624,11 @@ struct LibavCaptureSource::Impl {
         }
         streams.push_back(std::move(stream));
         return true;
+    }
+
+    void ensureCaptureEpoch() {
+        std::int64_t expected = -1;
+        captureEpochUs.compare_exchange_strong(expected, nowSteadyUs(), std::memory_order_acq_rel);
     }
 
     bool readObject(int packetsPerObject, M2tsObject* object, std::atomic<bool>& running, QString* error) {
@@ -996,6 +1017,16 @@ struct LibavCaptureSource::Impl {
                 }
                 return false;
             }
+            // Anchor audio to the shared capture epoch on its first frame, then
+            // advance sample-accurately. This keeps audio sample-exact while
+            // starting from the same zero as video so A/V stay in sync.
+            ensureCaptureEpoch();
+            if (!stream->audioAnchored) {
+                const std::int64_t epoch = captureEpochUs.load(std::memory_order_acquire);
+                const std::int64_t startUs = (epoch >= 0) ? (nowSteadyUs() - epoch) : 0;
+                stream->nextAudioPts = av_rescale(startUs, stream->encoder->sample_rate, 1000000);
+                stream->audioAnchored = true;
+            }
             frame->pts = stream->nextAudioPts;
             stream->nextAudioPts += frame->nb_samples;
             if (!sendEncoderFrame(stream, frame.get(), "audio", error)) {
@@ -1044,22 +1075,13 @@ struct LibavCaptureSource::Impl {
         // target is limited-range YUV420P, so convert ranges explicitly.
         applyScalerRange(stream->sws, static_cast<AVPixelFormat>(inputFrame->format), /*dstRangeFull=*/false);
         sws_scale(stream->sws, inputFrame->data, inputFrame->linesize, 0, inputFrame->height, frame->data, frame->linesize);
-        int64_t sourcePts = inputFrame->best_effort_timestamp;
-        if (sourcePts == AV_NOPTS_VALUE) {
-            sourcePts = inputFrame->pts;
-        }
-        if (sourcePts != AV_NOPTS_VALUE && stream->inputStream != nullptr) {
-            // Rescale the capture PTS from the input (e.g. V4L2, microsecond)
-            // timebase into the encoder timebase. Without this, libx264 sees
-            // huge inter-frame gaps, disables effective rate control, and
-            // encodes near-lossless -- flooding the transport far above the
-            // configured bitrate until the QUIC connection idle-times-out.
-            frame->pts = av_rescale_q(sourcePts,
-                                      stream->inputStream->time_base,
-                                      stream->encoder->time_base);
-        } else {
-            frame->pts = nextObjectId;
-        }
+        // Stamp PTS from a single steady-clock capture epoch shared with audio,
+        // so both streams (and the mpegts PCR) are on one timeline. The wall
+        // delta also gives libx264 real, increasing inter-frame timing so rate
+        // control works (the old raw best_effort_timestamp flooded the encoder).
+        ensureCaptureEpoch();
+        const std::int64_t mediaUs = nowSteadyUs() - captureEpochUs.load(std::memory_order_acquire);
+        frame->pts = av_rescale_q(mediaUs, AVRational{1, 1000000}, stream->encoder->time_base);
         return sendEncoderFrame(stream, frame.get(), "video", error);
     }
 #else
