@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCE="$REPO_ROOT/src/media/LibavCaptureSource.cpp"
+PIPELINE="$REPO_ROOT/src/media/LivePipeline.cpp"
 
 av_error_line="$(grep -n 'QString avError(int code)' "$SOURCE" | cut -d: -f1)"
 guard_line="$(grep -n '^#ifdef MOQ2TS_HAVE_LIBAV_CAPTURE$' "$SOURCE" | sed -n '2p' | cut -d: -f1)"
@@ -93,3 +94,41 @@ if ! grep -q 'decode=%s -> encode=%s -> mux=%s' "$SOURCE"; then
   printf 'live libav capture should log the decode->encode->mux pipeline at open\n' >&2
   exit 1
 fi
+
+# Audio and video PTS must share one capture epoch (A/V timeline).
+if ! grep -q 'captureEpochUs' "$SOURCE"; then
+  printf 'capture must stamp PTS from a shared capture epoch\n' >&2
+  exit 1
+fi
+if ! grep -q 'ensureCaptureEpoch' "$SOURCE"; then
+  printf 'capture must set the shared epoch once via ensureCaptureEpoch\n' >&2
+  exit 1
+fi
+
+# Audio PTS must be epoch-anchored, not a bare from-zero counter.
+if ! grep -q 'audioAnchored' "$SOURCE"; then
+  printf 'audio PTS must anchor to the shared capture epoch\n' >&2
+  exit 1
+fi
+
+# Objects must carry a real media time for pacing (offset->mediaUs map).
+if ! grep -q 'offsetMediaUs' "$SOURCE"; then
+  printf 'capture must record video media time per byte offset for pacing\n' >&2
+  exit 1
+fi
+if ! grep -q 'object->mediaTimeUs = lastVideoMediaUs' "$SOURCE"; then
+  printf 'readObject must tag objects with the real video media time\n' >&2
+  exit 1
+fi
+
+# The pacing wait must be stop-checkable (bounded), not an unbounded sleep.
+if ! grep -q 'paceDelayUs(' "$PIPELINE"; then
+  printf 'pipeline must pace object release via paceDelayUs\n' >&2
+  exit 1
+fi
+if ! grep -q 'm_running.load' "$PIPELINE"; then
+  printf 'pipeline pacing wait must re-check m_running each step\n' >&2
+  exit 1
+fi
+
+printf 'libav-capture-source guards passed\n'
