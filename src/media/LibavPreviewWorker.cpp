@@ -1,4 +1,5 @@
 #include "LibavPreviewWorker.h"
+#include "V4l2Capabilities.h"
 
 #include <QByteArray>
 #include <QFileInfo>
@@ -117,6 +118,7 @@ bool openStream(const char* formatName,
                 AVMediaType mediaType,
                 const PublishConfig& config,
                 PreviewStream* stream,
+                bool preferMjpeg,
                 QString* error) {
     const AVInputFormat* inputFormat = av_find_input_format(formatName);
     if (!inputFormat) {
@@ -130,6 +132,9 @@ bool openStream(const char* formatName,
     if (mediaType == AVMEDIA_TYPE_VIDEO) {
         av_dict_set(&options, "framerate", QByteArray::number(config.videoFramerate).constData(), 0);
         av_dict_set(&options, "video_size", QStringLiteral("%1x%2").arg(config.videoWidth).arg(config.videoHeight).toUtf8().constData(), 0);
+        if (preferMjpeg) {
+            av_dict_set(&options, "input_format", "mjpeg", 0);
+        }
     }
 
     AVFormatContext* opened = nullptr;
@@ -352,17 +357,38 @@ void LibavPreviewWorker::start(const PublishConfig& config) {
     std::unique_ptr<PreviewStream> audioStream;
     QString openError;
     if (!config.cameraDeviceId.isEmpty()) {
+        QString videoNode = config.cameraDeviceId;
+        bool preferMjpeg = false;
+#if defined(Q_OS_LINUX)
+        const CaptureOpen co = resolveCaptureOpen(
+            config.cameraDeviceId.toStdString(),
+            config.videoWidth, config.videoHeight,
+            static_cast<double>(config.videoFramerate));
+        videoNode = QString::fromStdString(co.node);
+        preferMjpeg = co.useMjpeg;
+#endif
         videoStream = std::make_unique<PreviewStream>();
-        if (!openStream(videoInputFormatName(), videoInputName(config.cameraDeviceId), AVMEDIA_TYPE_VIDEO, config, videoStream.get(), &openError)) {
-            emit error(openError);
-            m_running.store(false, std::memory_order_release);
-            emit finished();
-            return;
+        if (!openStream(videoInputFormatName(), videoInputName(videoNode),
+                        AVMEDIA_TYPE_VIDEO, config, videoStream.get(), preferMjpeg, &openError)) {
+            // One-time raw fallback when MJPEG open failed; ~PreviewStream frees
+            // the failed attempt when the unique_ptr is replaced.
+            bool recovered = false;
+            if (preferMjpeg) {
+                videoStream = std::make_unique<PreviewStream>();
+                recovered = openStream(videoInputFormatName(), videoInputName(videoNode),
+                                       AVMEDIA_TYPE_VIDEO, config, videoStream.get(), false, &openError);
+            }
+            if (!recovered) {
+                emit error(openError);
+                m_running.store(false, std::memory_order_release);
+                emit finished();
+                return;
+            }
         }
     }
     if (!config.microphoneDeviceId.isEmpty()) {
         audioStream = std::make_unique<PreviewStream>();
-        if (!openStream(audioInputFormatName(), audioInputName(config.microphoneDeviceId), AVMEDIA_TYPE_AUDIO, config, audioStream.get(), &openError)) {
+        if (!openStream(audioInputFormatName(), audioInputName(config.microphoneDeviceId), AVMEDIA_TYPE_AUDIO, config, audioStream.get(), false, &openError)) {
             emit error(openError);
             m_running.store(false, std::memory_order_release);
             emit finished();
