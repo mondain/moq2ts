@@ -54,9 +54,9 @@ int main(int argc, char** argv) {
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         publisher.stop();
         pipeline.requestStop();
-        pipeline.waitForStopped();
+        pipeline.waitForStopped();  // bounded (3s) + detach fallback
         if (shutdownFuture.valid()) {
-            shutdownFuture.wait();
+            shutdownFuture.wait_for(std::chrono::seconds(3));
         }
     });
 
