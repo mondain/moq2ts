@@ -68,10 +68,14 @@ jobs:
 
       - name: Source guards
         run: |
-          for f in tests/*-guards.sh; do
+          # Some guards inspect the sibling ../moqxr source checkout, which is not
+          # present in CI (we link the prebuilt SDK instead) -- run only the
+          # self-contained ones.
+          for f in $(grep -L moqxr tests/*-guards.sh); do
             echo "== $f =="
             bash "$f"
           done
+          echo "skipped (need ../moqxr source): $(grep -l moqxr tests/*-guards.sh | tr '\n' ' ')"
 
       - name: Package AppImage
         env:

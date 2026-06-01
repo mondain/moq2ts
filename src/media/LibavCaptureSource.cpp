@@ -151,7 +151,16 @@ QString audioInputName(const QString& deviceId) {
 #endif
 }
 
-int writePacket(void* opaque, const uint8_t* buffer, int bufferSize) {
+// ffmpeg 7.0 (libavformat 61) made the avio write_packet buffer pointer const.
+// Select the parameter type by version so both the older API (e.g. Ubuntu apt
+// ffmpeg 6.x / libavformat 60) and newer ffmpeg 7/8 compile.
+#if LIBAVFORMAT_VERSION_MAJOR >= 61
+using AvioWriteBuffer = const uint8_t*;
+#else
+using AvioWriteBuffer = uint8_t*;
+#endif
+
+int writePacket(void* opaque, AvioWriteBuffer buffer, int bufferSize) {
     auto* output = static_cast<QByteArray*>(opaque);
     output->append(reinterpret_cast<const char*>(buffer), bufferSize);
     return bufferSize;
