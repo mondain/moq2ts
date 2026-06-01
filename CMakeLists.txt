@@ -253,3 +253,13 @@ if(UNIX AND NOT APPLE)
     target_include_directories(moq2ts-v4l2-selection-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME moq2ts-v4l2-selection-tests COMMAND moq2ts-v4l2-selection-tests)
 endif()
+
+# Pure egress-pacing delay logic test (no Qt/libav deps).
+if(UNIX AND NOT APPLE)
+    enable_testing()
+    add_executable(moq2ts-pace-delay-tests
+        tests/pace_delay_test.cpp
+    )
+    target_include_directories(moq2ts-pace-delay-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME moq2ts-pace-delay-tests COMMAND moq2ts-pace-delay-tests)
+endif()
