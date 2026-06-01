@@ -42,10 +42,24 @@ QString avError(int code) {
     return QString::fromUtf8(buffer);
 }
 
-// MJPEG decoders emit full-range yuvj* frames; tell swscale the source range so
-// it does not log "deprecated pixel format used, make sure you did set range
-// correctly" and so the range conversion is correct. srcRangeFull reflects the
-// source pixel format; dstRangeFull reflects the destination.
+// libswscale logs "deprecated pixel format used, make sure you did set range
+// correctly" whenever a full-range yuvj* enum reaches it -- and it logs this at
+// context creation, before any sws_setColorspaceDetails call. Map yuvj* to its
+// non-deprecated equivalent (identical layout) for the scaler's source format,
+// then carry the full range explicitly via applyScalerRange. This silences the
+// warning at its source while keeping the range conversion correct.
+AVPixelFormat dejpegFormat(AVPixelFormat format) {
+    switch (format) {
+        case AV_PIX_FMT_YUVJ420P: return AV_PIX_FMT_YUV420P;
+        case AV_PIX_FMT_YUVJ422P: return AV_PIX_FMT_YUV422P;
+        case AV_PIX_FMT_YUVJ444P: return AV_PIX_FMT_YUV444P;
+        case AV_PIX_FMT_YUVJ440P: return AV_PIX_FMT_YUV440P;
+        default: return format;
+    }
+}
+
+// Tell swscale the source/destination range. srcRangeFull reflects the original
+// (pre-dejpeg) source pixel format; dstRangeFull reflects the destination.
 void applyScalerRange(SwsContext* sws, AVPixelFormat srcFormat, bool dstRangeFull) {
     if (!sws) {
         return;
@@ -798,7 +812,7 @@ struct LibavCaptureSource::Impl {
         stream->previewSws = sws_getCachedContext(stream->previewSws,
                                                   frame->width,
                                                   frame->height,
-                                                  static_cast<AVPixelFormat>(frame->format),
+                                                  dejpegFormat(static_cast<AVPixelFormat>(frame->format)),
                                                   frame->width,
                                                   frame->height,
                                                   AV_PIX_FMT_BGRA,
@@ -1012,7 +1026,7 @@ struct LibavCaptureSource::Impl {
         stream->sws = sws_getCachedContext(stream->sws,
                                            inputFrame->width,
                                            inputFrame->height,
-                                           static_cast<AVPixelFormat>(inputFrame->format),
+                                           dejpegFormat(static_cast<AVPixelFormat>(inputFrame->format)),
                                            frame->width,
                                            frame->height,
                                            static_cast<AVPixelFormat>(frame->format),
