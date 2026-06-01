@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <QDateTime>
 #include <QDebug>
 #include <QJsonArray>
@@ -84,6 +85,10 @@ void LivePipeline::start(const PublishConfig& cfg, MoqxrPublisher* publisher) {
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(m_doneMutex);
+        m_workerDone = false;
+    }
     m_workerThread = std::thread([this]() { runLoop(); });
     emit status(QStringLiteral("MSFTS M2TS packet pipeline started."));
 }
@@ -103,12 +108,36 @@ void LivePipeline::requestStop() {
 }
 
 void LivePipeline::waitForStopped() {
-    if (m_workerThread.joinable()) {
+    if (!m_workerThread.joinable()) {
+        return;
+    }
+    bool finished = false;
+    {
+        std::unique_lock<std::mutex> lock(m_doneMutex);
+        finished = m_doneCv.wait_for(lock, std::chrono::seconds(3),
+                                     [this]() { return m_workerDone; });
+    }
+    if (finished) {
         m_workerThread.join();
+    } else {
+        std::fprintf(stderr, "[moqxr][stop] worker join timed out after 3000ms; detaching\n");
+        std::fflush(stderr);
+        m_workerThread.detach();
     }
 }
 
 void LivePipeline::runLoop() {
+    struct DoneSignal {
+        LivePipeline* self;
+        ~DoneSignal() {
+            {
+                std::lock_guard<std::mutex> lock(self->m_doneMutex);
+                self->m_workerDone = true;
+            }
+            self->m_doneCv.notify_all();
+        }
+    } doneSignal{this};
+
     if (!m_publisher) {
         emit error(QStringLiteral("Pipeline is missing publisher."));
         m_running.store(false, std::memory_order_release);

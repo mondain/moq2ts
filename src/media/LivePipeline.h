@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <QImage>
 #include <QObject>
@@ -39,6 +41,10 @@ private:
 
     std::atomic<bool> m_running {false};
     std::thread m_workerThread;
+
+    std::mutex m_doneMutex;
+    std::condition_variable m_doneCv;
+    bool m_workerDone = false;
 };
 
 } // namespace moq2ts
