@@ -347,6 +347,19 @@ struct LibavCaptureSource::Impl {
 
         QString openError;
         if (!openWith(useMjpeg, &openError)) {
+            // A failed open may have left a partially-initialized input context
+            // (e.g. open succeeded but stream-info/decoder setup failed). Tear it
+            // down before retrying so the raw open does not overwrite and leak it.
+            if (useMjpeg) {
+                if (stream->decoder) {
+                    avcodec_free_context(&stream->decoder);
+                }
+                if (stream->inputFormat) {
+                    avformat_close_input(&stream->inputFormat);
+                }
+                stream->inputStream = nullptr;
+                stream->inputStreamIndex = -1;
+            }
             // If MJPEG open failed, retry once with raw before giving up.
             if (useMjpeg && openWith(false, error)) {
                 std::fprintf(stderr, "[moqxr][capture] MJPEG open failed (%s); fell back to raw\n",
