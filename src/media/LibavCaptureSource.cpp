@@ -42,6 +42,34 @@ QString avError(int code) {
     return QString::fromUtf8(buffer);
 }
 
+// MJPEG decoders emit full-range yuvj* frames; tell swscale the source range so
+// it does not log "deprecated pixel format used, make sure you did set range
+// correctly" and so the range conversion is correct. srcRangeFull reflects the
+// source pixel format; dstRangeFull reflects the destination.
+void applyScalerRange(SwsContext* sws, AVPixelFormat srcFormat, bool dstRangeFull) {
+    if (!sws) {
+        return;
+    }
+    const bool srcRangeFull = srcFormat == AV_PIX_FMT_YUVJ420P ||
+                              srcFormat == AV_PIX_FMT_YUVJ422P ||
+                              srcFormat == AV_PIX_FMT_YUVJ444P ||
+                              srcFormat == AV_PIX_FMT_YUVJ440P;
+    int* invTable = nullptr;
+    int* table = nullptr;
+    int srcRange = 0;
+    int dstRange = 0;
+    int brightness = 0;
+    int contrast = 0;
+    int saturation = 0;
+    if (sws_getColorspaceDetails(sws, &invTable, &srcRange, &table, &dstRange,
+                                 &brightness, &contrast, &saturation) < 0) {
+        return;
+    }
+    sws_setColorspaceDetails(sws, invTable, srcRangeFull ? 1 : 0,
+                             table, dstRangeFull ? 1 : 0,
+                             brightness, contrast, saturation);
+}
+
 struct AvPacketDeleter {
     void operator()(AVPacket* packet) const {
         av_packet_free(&packet);
@@ -765,6 +793,7 @@ struct LibavCaptureSource::Impl {
         if (!stream->previewSws) {
             return;
         }
+        applyScalerRange(stream->previewSws, static_cast<AVPixelFormat>(frame->format), /*dstRangeFull=*/true);
         sws_scale(stream->previewSws, frame->data, frame->linesize, 0, frame->height, dstData, dstLinesize);
         videoFrameCallback(image.copy());
     }
@@ -981,6 +1010,9 @@ struct LibavCaptureSource::Impl {
             }
             return false;
         }
+        // Source MJPEG frames are full-range yuvj*; the H.264/MPEG-TS encode
+        // target is limited-range YUV420P, so convert ranges explicitly.
+        applyScalerRange(stream->sws, static_cast<AVPixelFormat>(inputFrame->format), /*dstRangeFull=*/false);
         sws_scale(stream->sws, inputFrame->data, inputFrame->linesize, 0, inputFrame->height, frame->data, frame->linesize);
         int64_t sourcePts = inputFrame->best_effort_timestamp;
         if (sourcePts == AV_NOPTS_VALUE) {

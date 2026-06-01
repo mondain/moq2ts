@@ -28,6 +28,36 @@ namespace moq2ts {
 namespace {
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
+// MJPEG decoders emit full-range yuvj* frames; tell swscale the source range so
+// it does not log "deprecated pixel format used, make sure you did set range
+// correctly" and so the range conversion is correct. srcRangeFull reflects the
+// source pixel format; dstRangeFull reflects the destination.
+void applyScalerRange(SwsContext* sws, AVPixelFormat srcFormat, bool dstRangeFull) {
+    if (!sws) {
+        return;
+    }
+    const bool srcRangeFull = srcFormat == AV_PIX_FMT_YUVJ420P ||
+                              srcFormat == AV_PIX_FMT_YUVJ422P ||
+                              srcFormat == AV_PIX_FMT_YUVJ444P ||
+                              srcFormat == AV_PIX_FMT_YUVJ440P;
+    int* invTable = nullptr;
+    int* table = nullptr;
+    int srcRange = 0;
+    int dstRange = 0;
+    int brightness = 0;
+    int contrast = 0;
+    int saturation = 0;
+    // Read current details (preserves the conversion matrix and the
+    // brightness/contrast/saturation defaults), then flip only the ranges.
+    if (sws_getColorspaceDetails(sws, &invTable, &srcRange, &table, &dstRange,
+                                 &brightness, &contrast, &saturation) < 0) {
+        return;
+    }
+    sws_setColorspaceDetails(sws, invTable, srcRangeFull ? 1 : 0,
+                             table, dstRangeFull ? 1 : 0,
+                             brightness, contrast, saturation);
+}
+
 struct AvPacketDeleter {
     void operator()(AVPacket* packet) const {
         av_packet_free(&packet);
@@ -298,6 +328,7 @@ bool processVideoPacket(PreviewStream* stream, AVPacket* packet, LibavPreviewWor
             }
             return false;
         }
+        applyScalerRange(stream->sws, static_cast<AVPixelFormat>(frame->format), /*dstRangeFull=*/true);
         sws_scale(stream->sws, frame->data, frame->linesize, 0, frame->height, dstData, dstLinesize);
         emit worker->videoFrameReady(image.copy());
     }
