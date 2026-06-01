@@ -59,14 +59,19 @@ media publishing. It currently provides:
 - `M2tsPacketizer` scans PAT/PMT, selects one program, and filters media
   objects to PAT, selected PMT, selected PCR PID, and that program's elementary
   PIDs. Packets from other programs and null packets are not published.
-- `MsftsMuxer` builds the MSF catalog with `packaging: "m2ts"`.
-- `MsftsMuxer` also adds a `<stream>.timeline` track with
-  `packaging: "msf-timeline"`.
+- `MsftsMuxer` builds the MSF catalog: an `m2ts` media track plus an optional
+  media-timeline side-track. The media track carries MSF common fields
+  (`isLive`, `role`, `mimeType`, `targetLatency` when live, optional `bitrate`)
+  and MSFTS m2ts fields (`m2tsPacketSize`, `m2tsPacketsPerObject`,
+  `m2tsProgramNumber`, optional `m2tsPmtPid`/`m2tsPcrPid`, and
+  `m2tsRandomAccess` when every group starts on a random-access point).
+- `MsftsMuxer` also adds a `<stream>.timeline` track of MSF
+  `type: "mediatimeline"` that `depends` on the media track.
 - Whole source packets are grouped into MOQT Object payloads and exposed to
   `MoqxrPublisher::publishLiveObjects(...)`.
 - `LivePipeline` interleaves timeline objects at stream start and roughly once
   per second. These timeline objects map the most recent media object to Unix
-  wall-clock time in microseconds.
+  wall-clock time in milliseconds.
 
 ## File-level map
 
@@ -123,7 +128,7 @@ media publishing. It currently provides:
 
 - `src/media/MsftsMuxer.*`
   - Generates a compact MSF catalog for the `m2ts` packaging value.
-  - Adds an optional `msf-timeline` side-track catalog entry.
+  - Adds an optional MSF `mediatimeline` side-track catalog entry.
 
 - `src/publish/MoqxrPublisher.*`
   - Provides `IMoqOutput` interface.
@@ -206,67 +211,77 @@ For an MPTS input, `m2tsProgramNumber` identifies the selected program. The
 published media track is program-filtered; it is not a raw pass-through of every
 PID in the source multiplex.
 
-## Timeline track
+## Catalog shape
 
-The timeline track is separate from the M2TS media track so media object payloads
-remain draft-MSFTS-clean. The catalog entry looks like:
-
-```json
-{
-  "name": "sample-stream.timeline",
-  "packaging": "msf-timeline",
-  "timescale": 1000000,
-  "clock": "unix",
-  "clockUnit": "microseconds",
-  "referenceTrack": "sample-stream",
-  "updatePolicy": {
-    "mode": "periodic",
-    "intervalMs": 1000
-  }
-}
-```
-
-Timeline object payloads are compact JSON:
+`MsftsMuxer::catalogJson` emits a compact MSF catalog
+(`draft-ietf-moq-msf-00` common fields plus `draft-gregoire-moq-msfts-00`
+m2ts fields). A live capture catalog looks like:
 
 ```json
 {
   "version": 1,
-  "type": "timeline",
-  "clock": {
-    "kind": "unix",
-    "unixTimeUs": "1779416505123456"
-  },
-  "sender": {
-    "monotonicTimeUs": "428300012345",
-    "timebase": "steady"
-  },
-  "reference": {
-    "track": "sample-stream",
-    "groupId": "0",
-    "objectId": "48",
-    "mediaTimeUs": "12000000",
-    "pcrPid": 256,
-    "pcr": {
-      "pid": 256,
-      "base90k": "1080000",
-      "extension27m": 0
+  "format": "msf",
+  "generatedAt": 1779416505123,
+  "tracks": [
+    {
+      "name": "program-1",
+      "packaging": "m2ts",
+      "isLive": true,
+      "role": "video",
+      "mimeType": "video/mp2t",
+      "targetLatency": 1000,
+      "m2tsPacketSize": 188,
+      "m2tsPacketsPerObject": 7,
+      "m2tsProgramNumber": 1,
+      "m2tsPmtPid": 4096,
+      "m2tsPcrPid": 256,
+      "m2tsRandomAccess": true,
+      "initData": "R0AAEAAAs...=="
+    },
+    {
+      "name": "program-1.timeline",
+      "type": "mediatimeline",
+      "depends": ["program-1"],
+      "mimeType": "application/json"
     }
-  },
-  "mapping": {
-    "mediaTimeUs": "12000000",
-    "wallClockUnixUs": "1779416505123456",
-    "rateNumerator": 1,
-    "rateDenominator": 1
-  }
+  ]
 }
 ```
 
-Large integer timestamps are encoded as JSON strings to avoid precision loss in
-JavaScript receivers.
+Field presence is conditional:
 
-When the referenced media object contains a PCR on the selected PCR PID, the
-timeline reference includes the parsed MPEG-TS PCR base and extension. `base90k`
-is encoded as a JSON string to avoid precision loss in JavaScript receivers.
+- `format` and per-track `namespace` are emitted only when non-empty.
+- `generatedAt` is included only for live streams (MSF 5.1.6).
+- `targetLatency` is present only when `isLive` is true (MSF 5.1.16); `trackDuration`
+  is the inverse — VOD only, present only when `isLive` is false and the value is
+  positive (MSF 5.1.37).
+- `bitrate` is emitted only when greater than zero.
+- `m2tsPmtPid`/`m2tsPcrPid` appear only when known (PID >= 0).
+- `m2tsTimestampMode` is valid only for 192-octet source packets (MSFTS 6.9) and
+  MUST NOT appear for 188.
+- `m2tsRandomAccess` is advertised only when every MOQT group begins at a
+  random-access point (MSFTS 6.8).
+
+## Timeline track
+
+The timeline track is separate from the M2TS media track so media object payloads
+remain draft-MSFTS-clean. It is an MSF media timeline track
+(`draft-ietf-moq-msf-00` Section 7.2): MSF `type: "mediatimeline"`, a `depends`
+list naming the media track(s) it applies to, and an `application/json` MIME
+type (see the catalog example above).
+
+Timeline object payloads are an MSF media timeline (Section 7.1): a JSON array of
+records, where each record is a three-item array
+
+```json
+[[ 12000, [0, 48], 1779416505123 ]]
+```
+
+with the items being `mediaPresentationTimeMs`, `[groupId, objectId]`, and
+`wallclockMs` (milliseconds since the Unix epoch, `0` when unknown). A single
+timeline object carries one record. `LivePipeline` emits one at stream start and
+then roughly once per second (every `1000 / fragmentDurationMs` media objects),
+mapping the most recent media object's presentation time to wall-clock time.
 
 ## Runtime operational guidance
 

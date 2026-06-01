@@ -21,15 +21,18 @@ sequenceDiagram
     App->>Pub: connect(config)
     Pub-->>App: connectionStateChanged(connected=true)
     App->>Pipe: start(config, publisher)
-    Pipe->>Pkt: open M2TS source
+    Pipe->>Pkt: open(programNumber)
     Pkt-->>Pipe: packetSize = 188 or 192
-    Pipe->>Mux: catalogJson(track, packetSize, packetsPerObject)
-    Pipe->>Pub: publishLiveObjects(source)
+    Pipe->>Mux: catalogJson(MsftsCatalog{m2ts track + .timeline side-track})
+    Mux-->>Pipe: catalog JSON
+    Pipe->>Pub: publishLiveObjects(cfg, track, [track.timeline], catalog, nextObject)
+    Pub-->>Pipe: nextObject() pull
     Pipe->>Pkt: readObject(packetsPerObject)
-    Pkt-->>Pipe: whole source packets
-    Pub-->>Pipe: pull next LiveObject
-    Pub-->>Pipe: framePublished(bytes)
-    Pipe-->>UI: stats()
+    Pkt-->>Pipe: whole source packets (M2tsObject)
+    Note over Pipe: interleave .timeline object at start and ~1/s
+    Pipe-->>Pub: media or timeline object
+    Pub-->>Pipe: framePublished(track, bytes, objects)
+    Pipe-->>UI: stats(packets, bytes)
     Pipe-->>Prev: previewVideoFrame / previewAudioLevels
     Pipe-->>UI: status("running")
 ```
@@ -94,10 +97,11 @@ sequenceDiagram
     participant Pkt as M2tsPacketizer
     participant Pub as MoqxrPublisher
 
+    Pipe->>Pub: publishLiveObjects(cfg, track, [track.timeline], catalog, nextObject)
+    Pub-->>Pipe: nextObject() callback
     Pipe->>Pkt: read packets from multiplexed TS/M2TS source
     Pkt-->>Pipe: object payload = source packet(s)
-    Pipe->>Pub: publishLiveObjects(source)
-    Pub-->>Pkt: nextObject callback
+    Pipe-->>Pub: M2tsObject (or interleaved timeline object)
 ```
 
 ## 4) Reconnect strategy (recommended extension point)
