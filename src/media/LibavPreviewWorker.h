@@ -25,6 +25,11 @@ signals:
     void error(const QString& message);
     void finished();
 
+public:
+    // UI decrements this in its frame handler; the worker skips emitting new
+    // frames while > 0 so a slow UI thread cannot accumulate a queue backlog.
+    std::atomic<int> m_pendingFrames{0};
+
 private:
     std::atomic<bool> m_running = false;
 };

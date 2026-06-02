@@ -1,4 +1,7 @@
 #include "LibavCaptureSource.h"
+#ifdef __APPLE__
+#include "MacAvCapture.h"
+#endif
 
 #include "V4l2Capabilities.h"
 
@@ -266,6 +269,17 @@ struct LibavCaptureSource::Impl {
     bool headerWritten = false;
     std::function<void(const QImage&)> videoFrameCallback;
     std::function<void(double, double)> audioLevelsCallback;
+#ifdef __APPLE__
+    // When set, the capture inputs come from AVCaptureSession instead of
+    // libavdevice avfoundation (which hangs in avformat_open_input on this
+    // platform). The encoder pipeline above is unchanged.
+    std::unique_ptr<MacAvCapture> nativeSource;
+    StreamState* nativeVideoStream = nullptr;
+    StreamState* nativeAudioStream = nullptr;
+    int nativeAudioSampleRate = 0;
+    int nativeAudioChannels = 0;
+    int64_t nativeAudioNextPts = 0;
+#endif
 
     ~Impl() {
         if (outputFormat && headerWritten) {
@@ -328,12 +342,55 @@ struct LibavCaptureSource::Impl {
         outputFormat->pb = outputIo;
         outputFormat->flags |= AVFMT_FLAG_CUSTOM_IO;
 
+#ifdef __APPLE__
+        // macOS uses native AVCaptureSession instead of libavdevice avfoundation
+        // (which hangs in avformat_open_input on this platform). We still drive
+        // the same encoder + mpegts muxer pipeline below.
+        if (!config.cameraDeviceId.isEmpty()) {
+            nativeSource = std::make_unique<MacAvCapture>();
+            QString startErr;
+            if (!nativeSource->startVideo(config.cameraDeviceId,
+                                          config.videoWidth, config.videoHeight,
+                                          config.videoFramerate, &startErr)) {
+                if (error) *error = startErr;
+                return false;
+            }
+            // Drain one frame to learn the actual delivered geometry (which can
+            // differ from the request after the 720p→480p fallback). Then the
+            // encoder is sized to what we will actually be feeding it.
+            MacAvCapture::VideoFrame probe;
+            int actualW = config.videoWidth;
+            int actualH = config.videoHeight;
+            if (nativeSource->nextVideoFrame(probe, 3000)) {
+                actualW = probe.width;
+                actualH = probe.height;
+            }
+            const int useFps = std::max(1, config.videoFramerate);
+            if (!addVideoNative(actualW, actualH, useFps, error)) {
+                return false;
+            }
+            if (!config.microphoneDeviceId.isEmpty()) {
+                QString micErr;
+                if (!nativeSource->startAudio(config.microphoneDeviceId, &micErr)) {
+                    std::fprintf(stderr, "[moqxr][capture] mic open failed: %s\n",
+                                 micErr.toUtf8().constData());
+                } else if (!addAudioNative(error)) {
+                    return false;
+                }
+            }
+        } else if (!config.microphoneDeviceId.isEmpty()) {
+            // Audio-only capture is uncommon but supported on other platforms;
+            // not wired up natively yet — fall back to libav.
+            if (!addAudio(error)) return false;
+        }
+#else
         if (!config.cameraDeviceId.isEmpty() && !addVideo(error)) {
             return false;
         }
         if (!config.microphoneDeviceId.isEmpty() && !addAudio(error)) {
             return false;
         }
+#endif
         if (streams.empty()) {
             if (error) {
                 *error = QStringLiteral("No capture streams were selected.");
@@ -397,11 +454,22 @@ struct LibavCaptureSource::Impl {
         }
 #endif
 
+        int negotiateWidth = config.videoWidth;
+        int negotiateHeight = config.videoHeight;
+        int negotiateFps = config.videoFramerate;
+#ifdef __APPLE__
+        if (auto best = macSelectBestVideoMode(chosenNode, negotiateWidth, negotiateHeight, negotiateFps)) {
+            negotiateWidth = best->width;
+            negotiateHeight = best->height;
+            negotiateFps = std::max(1, static_cast<int>(std::lround(best->framerate)));
+            useMjpeg = useMjpeg || best->mjpeg;
+        }
+#endif
         const auto openWith = [&](bool mjpeg, QString* openError) -> bool {
             AVDictionary* options = nullptr;
-            av_dict_set(&options, "framerate", QByteArray::number(config.videoFramerate).constData(), 0);
+            av_dict_set(&options, "framerate", QByteArray::number(negotiateFps).constData(), 0);
             av_dict_set(&options, "video_size",
-                        QStringLiteral("%1x%2").arg(config.videoWidth).arg(config.videoHeight).toUtf8().constData(), 0);
+                        QStringLiteral("%1x%2").arg(negotiateWidth).arg(negotiateHeight).toUtf8().constData(), 0);
             if (mjpeg) {
                 av_dict_set(&options, "input_format", "mjpeg", 0);
             }
@@ -729,6 +797,11 @@ struct LibavCaptureSource::Impl {
     }
 
     bool pumpOnce(QString* error) {
+#ifdef __APPLE__
+        if (nativeSource) {
+            return pumpOnceNative(error);
+        }
+#endif
         for (auto& stream : streams) {
             PacketPtr packet = makePacket();
             int rc = av_read_frame(stream->inputFormat, packet.get());
@@ -1121,6 +1194,154 @@ struct LibavCaptureSource::Impl {
         frame->pts = pts;
         return sendEncoderFrame(stream, frame.get(), "video", error);
     }
+
+#ifdef __APPLE__
+    bool addVideoNative(int width, int height, int fps, QString* error) {
+        auto stream = std::make_unique<StreamState>();
+        stream->video = true;
+
+        const AVCodec* encoder = avcodec_find_encoder_by_name("libopenh264");
+        if (!encoder) {
+            encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+        }
+        if (!encoder) {
+            if (error) *error = QStringLiteral("No H.264 encoder found.");
+            return false;
+        }
+
+        stream->encoder = avcodec_alloc_context3(encoder);
+        stream->encoder->codec_id = encoder->id;
+        stream->encoder->codec_type = AVMEDIA_TYPE_VIDEO;
+        stream->encoder->width = width;
+        stream->encoder->height = height;
+        stream->encoder->time_base = AVRational{1, fps};
+        stream->encoder->framerate = AVRational{fps, 1};
+        stream->encoder->pix_fmt = AV_PIX_FMT_YUV420P;
+        stream->encoder->bit_rate = static_cast<int64_t>(config.videoTargetBitrateKbps) * 1000;
+        int gopSize = std::max(1, static_cast<int>(
+            (static_cast<long long>(fps) * std::max(1, config.keyframeIntervalMs) + 500) / 1000));
+        stream->encoder->gop_size = gopSize;
+        stream->encoder->max_b_frames = 0;
+        av_opt_set(stream->encoder->priv_data, "profile", "baseline", 0);
+        av_opt_set_int(stream->encoder->priv_data, "keyint", gopSize, 0);
+        av_opt_set_int(stream->encoder->priv_data, "min-keyint", gopSize, 0);
+        av_opt_set(stream->encoder->priv_data, "sc_threshold", "0", 0);
+        int rc = avcodec_open2(stream->encoder, encoder, nullptr);
+        if (rc < 0) {
+            if (error) *error = QStringLiteral("Failed opening H.264 encoder: %1").arg(avError(rc));
+            return false;
+        }
+        hasVideoStream = true;
+        nativeVideoStream = stream.get();
+        return addOutputStream(std::move(stream), error);
+    }
+
+    bool addAudioNative(QString* error) {
+        auto stream = std::make_unique<StreamState>();
+        stream->audio = true;
+
+        const AVCodec* encoder = nullptr;
+        if (config.audioCodec == AudioCodecPreset::Opus) {
+            encoder = avcodec_find_encoder_by_name("libopus");
+            if (!encoder) encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+        } else {
+            encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
+        }
+        if (!encoder) {
+            if (error) *error = QStringLiteral("No audio encoder available.");
+            return false;
+        }
+
+        stream->encoder = avcodec_alloc_context3(encoder);
+        stream->encoder->codec_type = AVMEDIA_TYPE_AUDIO;
+        stream->encoder->sample_rate = 48000;
+        av_channel_layout_default(&stream->encoder->ch_layout, 2);
+        stream->encoder->bit_rate = static_cast<int64_t>(config.audioTargetBitrateKbps) * 1000;
+        stream->encoder->sample_fmt = encoder->sample_fmts ? encoder->sample_fmts[0] : AV_SAMPLE_FMT_FLTP;
+        stream->encoder->time_base = AVRational{1, stream->encoder->sample_rate};
+        int rc = avcodec_open2(stream->encoder, encoder, nullptr);
+        if (rc < 0) {
+            if (error) *error = QStringLiteral("Failed opening audio encoder: %1").arg(avError(rc));
+            return false;
+        }
+        nativeAudioStream = stream.get();
+        return addOutputStream(std::move(stream), error);
+    }
+
+    // Build an AVFrame in BGRA from a MacAvCapture video frame; encodeFrame's
+    // sws will downconvert to YUV420P.
+    bool pumpNativeVideo(QString* error) {
+        if (!nativeSource || !nativeVideoStream) return true;
+        MacAvCapture::VideoFrame v;
+        // Block briefly so the outer readObject loop does not spin while
+        // waiting on the camera at ~30 fps (one frame ≈ 33 ms).
+        if (!nativeSource->nextVideoFrame(v, 50)) {
+            return true;
+        }
+        FramePtr frame = makeFrame();
+        frame->format = AV_PIX_FMT_BGRA;
+        frame->width = v.width;
+        frame->height = v.height;
+        int rc = av_frame_get_buffer(frame.get(), 32);
+        if (rc < 0) {
+            if (error) *error = QStringLiteral("Failed allocating BGRA frame: %1").arg(avError(rc));
+            return false;
+        }
+        const size_t dstStride = static_cast<size_t>(frame->linesize[0]);
+        const size_t srcStride = static_cast<size_t>(v.width) * 4;
+        if (dstStride == srcStride) {
+            std::memcpy(frame->data[0], v.bgra.data(), srcStride * v.height);
+        } else {
+            for (int y = 0; y < v.height; ++y) {
+                std::memcpy(frame->data[0] + y * dstStride, v.bgra.data() + y * srcStride, srcStride);
+            }
+        }
+        return encodeFrame(nativeVideoStream, frame.get(), error);
+    }
+
+    bool pumpNativeAudio(QString* error) {
+        if (!nativeSource || !nativeAudioStream) return true;
+        MacAvCapture::AudioBuffer a;
+        if (!nativeSource->nextAudioBuffer(a) || a.samples.empty()) {
+            return true;
+        }
+        if (nativeAudioSampleRate == 0) {
+            nativeAudioSampleRate = a.sampleRate > 0 ? a.sampleRate : 48000;
+            nativeAudioChannels = std::max(1, a.channels);
+        }
+        const int channels = std::max(1, a.channels);
+        const int frames = static_cast<int>(a.samples.size() / channels);
+        if (frames <= 0) return true;
+
+        FramePtr frame = makeFrame();
+        frame->format = AV_SAMPLE_FMT_FLT;  // interleaved float32
+        frame->sample_rate = a.sampleRate;
+        av_channel_layout_default(&frame->ch_layout, channels);
+        frame->nb_samples = frames;
+        int rc = av_frame_get_buffer(frame.get(), 0);
+        if (rc < 0) {
+            if (error) *error = QStringLiteral("Failed allocating audio frame: %1").arg(avError(rc));
+            return false;
+        }
+        std::memcpy(frame->data[0], a.samples.data(), a.samples.size() * sizeof(float));
+        // PTS in the input frame's own timebase (1/sample_rate), so the
+        // encoder/resampler can rescale correctly. Strictly increasing.
+        frame->pts = nativeAudioNextPts;
+        nativeAudioNextPts += frames;
+        return encodeFrame(nativeAudioStream, frame.get(), error);
+    }
+
+    bool pumpOnceNative(QString* error) {
+        // Block briefly on video so a slow camera does not spin this loop, but
+        // also flush any pending audio each iteration so meters and audio PTS
+        // stay synchronized with the video timeline.
+        if (!pumpNativeVideo(error)) return false;
+        if (!pumpNativeAudio(error)) return false;
+        // If nothing was ready, sleep a beat instead of busy-looping; the next
+        // call will block in nextVideoFrame for up to its timeout.
+        return true;
+    }
+#endif
 #else
     bool open(QString* error) {
         if (error) {

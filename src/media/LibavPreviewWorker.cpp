@@ -1,5 +1,10 @@
 #include "LibavPreviewWorker.h"
+#include "LibavCaptureSource.h"
 #include "V4l2Capabilities.h"
+
+#ifdef __APPLE__
+#include "MacAvCapture.h"
+#endif
 
 #include <QByteArray>
 #include <QFileInfo>
@@ -9,7 +14,9 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
+#include <mutex>
 
 #ifdef MOQ2TS_HAVE_LIBAV_CAPTURE
 extern "C" {
@@ -164,7 +171,10 @@ bool openStream(const char* formatName,
                 const PublishConfig& config,
                 PreviewStream* stream,
                 bool preferMjpeg,
+                const std::atomic<bool>* runningFlag,
                 QString* error) {
+    static std::once_flag deviceInit;
+    std::call_once(deviceInit, []() { avdevice_register_all(); });
     const AVInputFormat* inputFormat = av_find_input_format(formatName);
     if (!inputFormat) {
         if (error) {
@@ -175,14 +185,33 @@ bool openStream(const char* formatName,
 
     AVDictionary* options = nullptr;
     if (mediaType == AVMEDIA_TYPE_VIDEO) {
-        av_dict_set(&options, "framerate", QByteArray::number(config.videoFramerate).constData(), 0);
-        av_dict_set(&options, "video_size", QStringLiteral("%1x%2").arg(config.videoWidth).arg(config.videoHeight).toUtf8().constData(), 0);
-        if (preferMjpeg) {
+        int useWidth = config.videoWidth;
+        int useHeight = config.videoHeight;
+        int useFps = config.videoFramerate;
+        bool useMjpeg = preferMjpeg;
+#ifdef __APPLE__
+        if (auto best = macSelectBestVideoMode(inputName, useWidth, useHeight, useFps)) {
+            useWidth = best->width;
+            useHeight = best->height;
+            useFps = std::max(1, static_cast<int>(std::lround(best->framerate)));
+            useMjpeg = useMjpeg || best->mjpeg;
+        }
+#endif
+        av_dict_set(&options, "framerate", QByteArray::number(useFps).constData(), 0);
+        av_dict_set(&options, "video_size", QStringLiteral("%1x%2").arg(useWidth).arg(useHeight).toUtf8().constData(), 0);
+        if (useMjpeg) {
             av_dict_set(&options, "input_format", "mjpeg", 0);
         }
     }
 
-    AVFormatContext* opened = nullptr;
+    AVFormatContext* opened = avformat_alloc_context();
+    if (runningFlag) {
+        opened->interrupt_callback.callback = [](void* opaque) -> int {
+            auto* flag = static_cast<const std::atomic<bool>*>(opaque);
+            return flag && !flag->load(std::memory_order_acquire) ? 1 : 0;
+        };
+        opened->interrupt_callback.opaque = const_cast<std::atomic<bool>*>(runningFlag);
+    }
     int rc = avformat_open_input(&opened, inputName.toUtf8().constData(), inputFormat, &options);
     av_dict_free(&options);
     if (rc < 0) {
@@ -343,7 +372,14 @@ bool processVideoPacket(PreviewStream* stream, AVPacket* packet, LibavPreviewWor
             return false;
         }
         applyScalerRange(stream->sws, static_cast<AVPixelFormat>(frame->format), /*dstRangeFull=*/true);
+        // Drop the frame if the UI thread has not finished processing the
+        // previous one; full-res ARGB scaling on the UI thread cannot keep up
+        // with 30 fps and would beachball.
+        if (worker->m_pendingFrames.load(std::memory_order_acquire) > 0) {
+            continue;
+        }
         sws_scale(stream->sws, frame->data, frame->linesize, 0, frame->height, dstData, dstLinesize);
+        worker->m_pendingFrames.fetch_add(1, std::memory_order_release);
         emit worker->videoFrameReady(image.copy());
     }
     return true;
@@ -412,6 +448,32 @@ void LibavPreviewWorker::start(const PublishConfig& config) {
     std::unique_ptr<PreviewStream> videoStream;
     std::unique_ptr<PreviewStream> audioStream;
     QString openError;
+#ifdef __APPLE__
+    // libavdevice/avfoundation hangs in avformat_open_input when driven from a
+    // non-main thread because it does not pump the AVCaptureSession's run loop.
+    // Use a native AVCaptureSession instead; preview frames arrive on its own
+    // dispatch queue and this worker thread pulls the latest one each iteration.
+    std::unique_ptr<MacAvCapture> macVideo;
+    if (!config.cameraDeviceId.isEmpty()) {
+        macVideo = std::make_unique<MacAvCapture>();
+        if (!macVideo->startVideo(config.cameraDeviceId,
+                                  config.videoWidth, config.videoHeight,
+                                  config.videoFramerate, &openError)) {
+            emit error(openError);
+            m_running.store(false, std::memory_order_release);
+            emit finished();
+            return;
+        }
+        if (!config.microphoneDeviceId.isEmpty()) {
+            // Best-effort: a mic failure does not abort the video preview.
+            QString micError;
+            if (!macVideo->startAudio(config.microphoneDeviceId, &micError)) {
+                std::fprintf(stderr, "[preview] mic open failed: %s\n",
+                             micError.toUtf8().constData());
+            }
+        }
+    }
+#else
     if (!config.cameraDeviceId.isEmpty()) {
         QString videoNode = config.cameraDeviceId;
         bool preferMjpeg = false;
@@ -425,14 +487,14 @@ void LibavPreviewWorker::start(const PublishConfig& config) {
 #endif
         videoStream = std::make_unique<PreviewStream>();
         if (!openStream(videoInputFormatName(), videoInputName(videoNode),
-                        AVMEDIA_TYPE_VIDEO, config, videoStream.get(), preferMjpeg, &openError)) {
+                        AVMEDIA_TYPE_VIDEO, config, videoStream.get(), preferMjpeg, &m_running, &openError)) {
             // One-time raw fallback when MJPEG open failed; ~PreviewStream frees
             // the failed attempt when the unique_ptr is replaced.
             bool recovered = false;
             if (preferMjpeg) {
                 videoStream = std::make_unique<PreviewStream>();
                 recovered = openStream(videoInputFormatName(), videoInputName(videoNode),
-                                       AVMEDIA_TYPE_VIDEO, config, videoStream.get(), false, &openError);
+                                       AVMEDIA_TYPE_VIDEO, config, videoStream.get(), false, &m_running, &openError);
             }
             if (!recovered) {
                 emit error(openError);
@@ -442,19 +504,54 @@ void LibavPreviewWorker::start(const PublishConfig& config) {
             }
         }
     }
+#endif
+#ifndef __APPLE__
     if (!config.microphoneDeviceId.isEmpty()) {
         audioStream = std::make_unique<PreviewStream>();
-        if (!openStream(audioInputFormatName(), audioInputName(config.microphoneDeviceId), AVMEDIA_TYPE_AUDIO, config, audioStream.get(), false, &openError)) {
+        if (!openStream(audioInputFormatName(), audioInputName(config.microphoneDeviceId), AVMEDIA_TYPE_AUDIO, config, audioStream.get(), false, &m_running, &openError)) {
             emit error(openError);
             m_running.store(false, std::memory_order_release);
             emit finished();
             return;
         }
     }
+#endif
 
     emit status(QStringLiteral("Preview running."));
     while (m_running.load(std::memory_order_acquire)) {
         QString readError;
+#ifdef __APPLE__
+        if (macVideo) {
+            MacAvCapture::VideoFrame frame;
+            if (macVideo->nextVideoFrame(frame, 100)) {
+                if (m_pendingFrames.load(std::memory_order_acquire) == 0) {
+                    QImage image(frame.width, frame.height, QImage::Format_ARGB32);
+                    std::memcpy(image.bits(), frame.bgra.data(), frame.bgra.size());
+                    m_pendingFrames.fetch_add(1, std::memory_order_release);
+                    emit videoFrameReady(image);
+                }
+            }
+            MacAvCapture::AudioBuffer audio;
+            if (macVideo->nextAudioBuffer(audio) && !audio.samples.empty()) {
+                const int channels = std::max(1, audio.channels);
+                const size_t frames = audio.samples.size() / static_cast<size_t>(channels);
+                double sums[2] = {0.0, 0.0};
+                for (size_t f = 0; f < frames; ++f) {
+                    for (int outCh = 0; outCh < 2; ++outCh) {
+                        const int srcCh = std::min(outCh, channels - 1);
+                        const float s = audio.samples[f * channels + srcCh];
+                        sums[outCh] += static_cast<double>(s) * s;
+                    }
+                }
+                if (frames > 0) {
+                    const double l = std::sqrt(sums[0] / frames);
+                    const double r = std::sqrt(sums[1] / frames);
+                    emit audioLevelsChanged(std::clamp(l, 0.0, 1.0),
+                                            std::clamp(r, 0.0, 1.0));
+                }
+            }
+        }
+#endif
         if (videoStream && !readPreviewPacket(videoStream.get(), this, &readError)) {
             emit error(readError);
             break;
@@ -463,10 +560,19 @@ void LibavPreviewWorker::start(const PublishConfig& config) {
             emit error(readError);
             break;
         }
-        if (!videoStream || !audioStream) {
+        if (!videoStream && !audioStream) {
+#ifndef __APPLE__
+            QThread::msleep(5);
+#endif
+        } else if (!videoStream || !audioStream) {
             QThread::msleep(5);
         }
     }
+#ifdef __APPLE__
+    if (macVideo) {
+        macVideo->stop();
+    }
+#endif
     m_running.store(false, std::memory_order_release);
     emit status(QStringLiteral("Preview stopped."));
     emit finished();

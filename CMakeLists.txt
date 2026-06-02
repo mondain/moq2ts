@@ -166,8 +166,16 @@ set(SOURCES
 )
 
 if(APPLE)
-    list(APPEND SOURCES src/media/MacCaptureEnumerator.mm)
+    list(APPEND SOURCES
+        src/media/MacCaptureEnumerator.mm
+        src/media/MacAvCapture.mm
+    )
     enable_language(OBJCXX)
+    set_source_files_properties(
+        src/media/MacCaptureEnumerator.mm
+        src/media/MacAvCapture.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+    )
 endif()
 
 set(HEADERS
@@ -217,6 +225,7 @@ if(APPLE)
     target_link_libraries(moq2ts-publisher PRIVATE
         "-framework AVFoundation"
         "-framework CoreMedia"
+        "-framework CoreVideo"
         "-framework Foundation"
     )
 endif()

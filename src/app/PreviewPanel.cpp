@@ -125,11 +125,17 @@ void PreviewPanel::stopPreview() {
 
 void PreviewPanel::handleVideoFrame(const QImage& image) {
     if (image.isNull()) {
+        if (m_worker) {
+            m_worker->m_pendingFrames.fetch_sub(1, std::memory_order_release);
+        }
         return;
     }
-    const QPixmap pixmap = QPixmap::fromImage(image).scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QPixmap pixmap = QPixmap::fromImage(image).scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation);
     m_videoLabel->setPixmap(pixmap);
     m_hasVideoFrame = true;
+    if (m_worker) {
+        m_worker->m_pendingFrames.fetch_sub(1, std::memory_order_release);
+    }
 }
 
 void PreviewPanel::handleAudioLevels(double left, double right) {

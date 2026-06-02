@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "../app/PublishConfig.h"
 #include "M2tsPacketizer.h"
@@ -21,6 +22,23 @@ struct CaptureDevice {
     QString description;
     QStringList candidateNodes; // all capture nodes for this physical camera
 };
+
+struct VideoCaptureMode {
+    int width = 0;
+    int height = 0;
+    double framerate = 0.0;
+    bool mjpeg = false;  // chosen format is MJPEG-encoded
+};
+
+#ifdef __APPLE__
+// Returns the supported video mode closest to (wantWidth, wantHeight, wantFps) for
+// the AVFoundation device with the given numeric id, or std::nullopt if the device
+// is unknown / has no listable formats.
+std::optional<VideoCaptureMode> macSelectBestVideoMode(const QString& deviceId,
+                                                      int wantWidth,
+                                                      int wantHeight,
+                                                      int wantFps);
+#endif
 
 class LibavCaptureSource final {
 public:
